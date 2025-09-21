@@ -1,0 +1,25 @@
+services:
+  gitchat:
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/library/golang:1.24.4-bookworm
+    container_name: gitchat
+    working_dir: /work
+    stdin_open: true   # 等同 -i
+    tty: true          # 等同 -t
+    command: ["sh"]
+    ports:
+      - "8002:8002"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - "C:/Users/Administrator/Documents/myContainer/gitchat:/work"
+      - "C:/Users/Administrator/Documents/myContainer/gitchat/gocache:/go/pkg/mod"
+      - "C:/Users/Administrator/Documents/myContainer/gitchat/gobuildcache:/root/.cache/go-build"
+      - "C:/Users/Administrator/.ssh::/root/.ssh"
+      - "C:/Users/Administrator/.gitconfig:/root/.gitconfig"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]   # 等同 --gpus all
