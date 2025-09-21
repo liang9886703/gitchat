@@ -14,7 +14,7 @@ services:
       - "C:/Users/Administrator/Documents/myContainer/gitchat:/work"
       - "C:/Users/Administrator/Documents/myContainer/gitchat/gocache:/go/pkg/mod"
       - "C:/Users/Administrator/Documents/myContainer/gitchat/gobuildcache:/root/.cache/go-build"
-      - "C:/Users/Administrator/.ssh::/root/.ssh"
+      - "C:/Users/Administrator/.ssh:/root/.ssh"
       - "C:/Users/Administrator/.gitconfig:/root/.gitconfig"
     deploy:
       resources:
