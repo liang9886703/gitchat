@@ -1,2 +1,4 @@
 gocache
 gobuildcache
+.history
+env.sh

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
+	router "gitchat/src"
 	"net/http"
+	"os"
 
 	"github.com/gin-gonic/gin"
 )
@@ -68,7 +71,14 @@ func setupRouter() *gin.Engine {
 }
 
 func main() {
-	r := setupRouter()
-	// Listen and Server in 0.0.0.0:8080
-	r.Run(":8080")
+
+	cardsServer, err := router.GetCardsServer()
+	if err != nil {
+		fmt.Printf("Failed to get cards server: %v", err)
+		os.Exit(1)
+	}
+
+	r := router.SetupRouter(cardsServer)
+	r.Run(":8002")
+	fmt.Println("Server listening on :8002")
 }
