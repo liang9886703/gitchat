@@ -1,0 +1,135 @@
+name: Four-platform clients
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths: ["apps/native/**", "src/**", "main.go", "go.mod", "go.sum", "web/**", ".github/workflows/native.yml"]
+  pull_request:
+    paths: ["apps/native/**", "src/**", "main.go", "go.mod", "go.sum", "web/**", ".github/workflows/native.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS
+            bundle: app
+          - os: windows-latest
+            name: Windows
+            bundle: nsis
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/native/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native/src-tauri
+      - run: npm ci
+      - name: Test native Go persistence and locking
+        working-directory: .
+        run: go test -race -timeout 90s ./...
+      - run: npm run prepare:desktop
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Build unsigned desktop bundle
+        run: npm run tauri -- build --bundles ${{ matrix.bundle }} --ci
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qiuzhi-${{ matrix.name }}-unsigned
+          path: apps/native/src-tauri/target/release/bundle/
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/native/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: android-actions/setup-android@v3
+      - name: Install Android build tools
+        run: |
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native/src-tauri
+      - run: npm ci
+      - run: npm run tauri -- android init --ci --skip-targets-install
+      - name: Build installable debug APK
+        run: npm run tauri -- android build --debug --apk --target aarch64 --ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qiuzhi-Android-arm64-debug
+          path: apps/native/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/native/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native/src-tauri
+      - run: npm ci
+      - run: npm run tauri -- ios init --ci --skip-targets-install
+      - name: Build unsigned iOS simulator archive
+        run: npm run tauri -- ios build --debug --target aarch64-sim --no-sign --archive-only --ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qiuzhi-iOS-simulator-unsigned
+          path: |
+            apps/native/src-tauri/gen/apple/build/**/*.app
+            apps/native/src-tauri/gen/apple/build/**/*.xcarchive
+          if-no-files-found: error
+          retention-days: 14
