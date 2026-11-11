@@ -7,6 +7,8 @@ const state = {
   operation: 'deepen', quote: '', draft: '', busy: false, streamCard: null,
   shared: null, collectionCards: [], selection: '',
 };
+let navigationVersion = 0;
+
 const palette = [
   ['#eee8fc', '#8871b5'], ['#e7e9ff', '#7b7bc1'], ['#e3f1e9', '#6a9a82'],
   ['#fff0df', '#ba936d'], ['#f5e3ec', '#b27d98'], ['#e0f0f3', '#6a9fa8'],
@@ -47,6 +49,11 @@ function toast(message) {
   const element = $('#toast');
   element.textContent = message;
   element.classList.add('visible');
+  const dialogStatus = $('#dialog-status');
+  if ($('#dialog').open && dialogStatus) {
+    dialogStatus.textContent = message;
+    dialogStatus.hidden = false;
+  }
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => element.classList.remove('visible'), 4300);
 }
@@ -56,7 +63,7 @@ function closeSidebar() {
 }
 function modal(title, content) {
   closeSidebar();
-  $('#dialog-content').innerHTML = `<div class="dialog-head"><h2 id="dialog-title">${escapeHTML(title)}</h2><button data-action="close-dialog" aria-label="关闭">×</button></div>${content}`;
+  $('#dialog-content').innerHTML = `<div class="dialog-head"><h2 id="dialog-title">${escapeHTML(title)}</h2><button data-action="close-dialog" aria-label="关闭">×</button></div>${content}<p id="dialog-status" class="dialog-status" role="status" hidden></p>`;
   if (!$('#dialog').open) $('#dialog').showModal();
 }
 function closeDialog() { $('#dialog').close(); }
@@ -113,6 +120,8 @@ function renderSidebar() {
   $('#footer-mode').textContent = state.config.mode === 'demo' ? '演示回答用于体验交互' : 'AI 生成内容，请核实重要信息';
 }
 function render() {
+  const previousGraph = $('#graph-scroll');
+  const graphPosition = previousGraph ? { left: previousGraph.scrollLeft, top: previousGraph.scrollTop } : null;
   renderSidebar();
   $('#page-title').textContent = state.collection === 'favorites' ? '收藏的卡片' : state.collection === 'archive' ? '归档与历史' : state.session?.title || '新的探索';
   $('#page-subtitle').textContent = state.shared ? '来自分享的思考路径' : state.session ? `${realCards().length} 张卡片 · ${state.view === 'overview' ? '让思路彼此相连' : '当前分支的上下文已就绪'}` : '一个问题，一个新的方向';
@@ -123,7 +132,22 @@ function render() {
   else if (state.view === 'overview') html += overviewHTML();
   else html += focusHTML();
   $('#main').innerHTML = html;
-  if (state.view === 'overview') requestAnimationFrame(drawGraph);
+  if (state.view === 'overview') requestAnimationFrame(() => {
+    drawGraph();
+    const area = $('#graph-scroll');
+    if (!area) return;
+    if (graphPosition) {
+      area.scrollLeft = graphPosition.left;
+      area.scrollTop = graphPosition.top;
+    } else {
+      const node = [...area.querySelectorAll('[data-node]')].find(element => element.dataset.node === state.focus);
+      if (node) {
+        const bounds = node.getBoundingClientRect();
+        const viewport = area.getBoundingClientRect();
+        area.scrollLeft += bounds.left + bounds.width / 2 - viewport.left - area.clientWidth / 2;
+      }
+    }
+  });
 }
 function welcomeHTML() {
   return `<section class="welcome"><div class="welcome-mark">✳</div><h1>从一个问题开始</h1><p>把大的问题拆小，把不同的思路展开。<br>每一张卡片，都是你探索的一步。</p>${composerHTML()}<div class="starter-grid"><button class="starter" data-action="starter" data-value="我想安排一次日本旅行，如何先确定方向？"><span>↗</span><strong>规划一段旅程</strong><small>从想去的地方<br>到自己的旅行路线</small></button><button class="starter" data-action="starter" data-value="我想了解大模型的长期记忆，应该从哪里开始？"><span>✧</span><strong>理解一个新概念</strong><small>先建立全貌<br>再逐层深入</small></button><button class="starter" data-action="starter" data-value="我需要为一个新项目选择技术方案，该怎样比较不同架构？"><span>⌘</span><strong>比较不同的方案</strong><small>分别探索可能性<br>再汇合成一个决定</small></button></div><div class="intro-hint">上滑深入 · 左滑发散 · 双指缩放查看思维图</div></section>`;
@@ -131,8 +155,8 @@ function welcomeHTML() {
 function focusHTML() {
   let card = current();
   if (state.compose && isRoot(card)) return welcomeHTML();
-  if (isRoot(card)) card = realCards().filter(item => !item.archived).at(-1) || realCards().at(-1);
-  if (!card) return welcomeHTML();
+  if (isRoot(card) || card.archived) card = realCards().filter(item => !item.archived).at(-1);
+  if (!card) { state.focus = state.session.root_id; return welcomeHTML(); }
   state.focus = card.id;
   const path = ancestry(card);
   const previous = cardByID(card.parent_ids?.[0]);
@@ -219,7 +243,8 @@ async function refreshSessions() {
 }
 function acceptSession(session) {
   state.session = session;
-  state.focus = session.focus_id || session.cards?.filter(card => card.id !== session.root_id).at(-1)?.id || session.root_id;
+  const focused = session.cards?.find(card => card.id === session.focus_id && !card.archived);
+  state.focus = focused?.id || session.cards?.filter(card => card.id !== session.root_id && !card.archived).at(-1)?.id || session.root_id;
   state.collection = 'sessions';
   state.compose = false;
   state.selected.clear();
@@ -230,7 +255,9 @@ function acceptSession(session) {
 }
 async function openSession(sessionID) {
   if (state.busy) return toast('请先等待当前回答完成，或点击停止');
+  const navigation = ++navigationVersion;
   const session = await api(`/api/sessions/${encodeURIComponent(sessionID)}`);
+  if (navigation !== navigationVersion || state.busy) return;
   state.shared = null;
   history.replaceState({}, '', location.pathname);
   acceptSession(session);
@@ -244,13 +271,14 @@ async function focusCard(cardID) {
   const card = cardByID(cardID);
   if (!card) return;
   const sessionID = state.session.id;
+  const navigation = ++navigationVersion;
   if (!state.shared) {
     await post(`/api/sessions/${sessionID}/focus`, { card_id: cardID });
     const session = await api(`/api/sessions/${sessionID}`);
-    if (state.session?.id !== sessionID || state.busy) return;
+    if (navigation !== navigationVersion || state.session?.id !== sessionID || state.busy) return;
     state.session = session;
   }
-  if (state.session?.id !== sessionID || state.busy) return;
+  if (navigation !== navigationVersion || state.session?.id !== sessionID || state.busy) return;
   state.focus = cardID;
   state.selection = '';
   state.compose = false;
@@ -260,6 +288,7 @@ async function focusCard(cardID) {
 }
 function beginCompose(operation = 'deepen') {
   if (state.busy || state.shared) return;
+  navigationVersion++;
   state.operation = operation;
   state.compose = true;
   state.view = 'focus';
@@ -274,12 +303,17 @@ async function generate(questionOverride) {
   const quote = state.quote;
   const selected = [...state.selected];
   const initialFocus = state.focus;
+  navigationVersion++;
   state.busy = true;
   state.draft = question;
   state.streamCard = null;
   render();
   let sessionID = state.session?.id;
   let terminal = false;
+  let reader;
+  let created = false;
+  let transportFailed = false;
+  const controller = new AbortController();
   try {
     if (!state.session) {
       const session = await post('/api/sessions', { app_id: state.config.apps?.[0]?.id || '', title: short(question, 40) });
@@ -294,14 +328,14 @@ async function generate(questionOverride) {
     state.view = 'focus';
     render();
     const response = await fetch(`/api/sessions/${encodeURIComponent(sessionID)}/chat`, {
-      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: JSON.stringify(input),
+      method: 'POST', credentials: 'same-origin', signal: controller.signal, headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: JSON.stringify(input),
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || `生成失败（${response.status}）`);
     }
     if (!response.body) throw new Error('浏览器无法读取流式响应');
-    const reader = response.body.getReader();
+    reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
     function frame(data) {
@@ -309,6 +343,7 @@ async function generate(questionOverride) {
       if (!text || text === '[DONE]' || state.session?.id !== sessionID) return;
       const event = JSON.parse(text);
       if (event.card) {
+        created = true;
         const position = state.session.cards.findIndex(card => card.id === event.card.id);
         if (position === -1) state.session.cards.push(event.card);
         else state.session.cards[position] = event.card;
@@ -336,22 +371,40 @@ async function generate(questionOverride) {
       }
       if (done) { if (buffer.trim()) frame(buffer); break; }
     }
-    if (!terminal) toast('连接已结束，正在读取最新保存的卡片');
+    if (!terminal) throw new Error('连接在回答完成前中断，正在恢复已保存的卡片');
     if (state.session?.id === sessionID) {
       state.draft = '';
       state.quote = '';
       state.selected.clear();
     }
   } catch (error) {
+    transportFailed = true;
+    controller.abort();
+    await reader?.cancel().catch(() => {});
+    if (state.streamCard && sessionID) {
+      await post(`/api/sessions/${sessionID}/cards/${state.streamCard}/stop`).catch(() => {});
+    }
     toast(error.message);
   } finally {
+    reader?.releaseLock();
     if (sessionID) {
       const focus = state.focus;
       try {
-        const session = await api(`/api/sessions/${encodeURIComponent(sessionID)}`);
+        let session = await api(`/api/sessions/${encodeURIComponent(sessionID)}`);
+        for (let attempt = 0; transportFailed && attempt < 10 && session.cards.some(card => card.id === state.streamCard && ['pending', 'streaming'].includes(card.status)); attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          session = await api(`/api/sessions/${encodeURIComponent(sessionID)}`);
+        }
         if (state.session?.id === sessionID) {
           state.session = session;
-          state.focus = session.cards.some(card => card.id === focus) ? focus : session.focus_id;
+          const recovered = session.cards.find(card => card.id === session.focus_id);
+          const recoveredRequest = !created && recovered?.question === question && recovered?.id !== initialFocus;
+          state.focus = recoveredRequest ? recovered.id : session.cards.some(card => card.id === focus) ? focus : session.focus_id;
+          if (transportFailed && !created && !recoveredRequest) {
+            state.compose = true;
+            state.operation = operation;
+            state.quote = quote;
+          }
         }
         await refreshSessions();
       } catch (error) { toast(error.message); }
@@ -372,6 +425,7 @@ async function patch(cardID, changes, sessionID = state.session.id) {
 async function collection(name) {
   if (state.busy) return toast('请先等待当前回答完成，或点击停止');
   closeSidebar();
+  const navigation = ++navigationVersion;
   state.collection = name;
   if (name === 'sessions') return render();
   $('#main').innerHTML = '<div class="loading">正在整理卡片…</div>';
@@ -380,6 +434,7 @@ async function collection(name) {
   for (let offset = 0; offset < state.sessions.length; offset += 8) {
     sessions.push(...await Promise.all(state.sessions.slice(offset, offset + 8).map(session => api(`/api/sessions/${encodeURIComponent(session.id)}`))));
   }
+  if (navigation !== navigationVersion || state.busy) return;
   state.collectionCards = sessions.flatMap(session => (session.cards || []).filter(card => card.id !== session.root_id && (name === 'favorites' ? card.favorite : card.archived)).map(card => ({ card, session })));
   render();
 }
@@ -397,7 +452,9 @@ async function importToken(value) {
   let token = String(value || '').trim();
   if (!token) return toast('请输入分享链接或分享码');
   try { token = new URL(token).searchParams.get('share') || token; } catch (_) { /* Plain capability tokens are supported. */ }
+  const navigation = ++navigationVersion;
   const session = await post(`/api/shares/${encodeURIComponent(token)}/import`);
+  if (navigation !== navigationVersion || state.busy) return;
   state.shared = null;
   history.replaceState({}, '', location.pathname);
   acceptSession(session);
@@ -417,6 +474,7 @@ const actions = {
   'sidebar': () => { $('#sidebar').classList.toggle('open'); $('#sidebar-scrim').classList.toggle('open'); },
   'new': () => {
     if (state.busy) return toast('请先等待当前回答完成，或点击停止');
+    navigationVersion++;
     closeDialog();
     Object.assign(state, { session: null, focus: null, shared: null, collection: 'sessions', view: 'focus', compose: false, quote: '', draft: '', operation: 'deepen' });
     state.selected.clear();
@@ -425,12 +483,12 @@ const actions = {
     $('#sidebar').classList.remove('open'); $('#sidebar-scrim').classList.remove('open'); render(); $('#question')?.focus();
   },
   'session': element => openSession(element.dataset.id),
-  'view': element => { state.view = element.dataset.value; state.collection = 'sessions'; render(); },
+  'view': element => { navigationVersion++; state.view = element.dataset.value; state.collection = 'sessions'; render(); },
   'collection': element => collection(element.dataset.value),
   'starter': element => { state.draft = element.dataset.value; render(); $('#question')?.focus(); },
   'operation': element => { if (state.busy) return; state.draft = $('#question')?.value || state.draft; state.operation = element.dataset.value; render(); $('#question')?.focus(); },
   'compose': element => beginCompose(element.dataset.value),
-  'compose-root': () => { if (state.busy || state.shared) return; state.focus = state.session.root_id; state.operation = 'deepen'; state.compose = true; state.view = 'focus'; render(); },
+  'compose-root': () => { if (state.busy || state.shared) return; navigationVersion++; state.focus = state.session.root_id; state.operation = 'deepen'; state.compose = true; state.view = 'focus'; render(); },
   'cancel-compose': () => { state.compose = false; state.quote = ''; state.operation = 'deepen'; render(); },
   'suggestion': element => { const suggestion = current()?.suggestions?.[Number(element.dataset.index)]; if (!suggestion) return; state.operation = 'deepen'; return generate(suggestion.question || suggestion.title); },
   'focus': element => focusCard(element.dataset.id),
@@ -449,7 +507,7 @@ const actions = {
   'retry': () => {
     const card = current();
     if (!card) return;
-    const request = { operation: card.operation === 'merge' ? 'merge' : 'deepen', parent_ids: card.parent_ids || [state.session.root_id], question: card.question, quote: '' };
+    const request = { operation: card.operation === 'merge' ? 'merge' : 'deepen', parent_ids: card.parent_ids || [state.session.root_id], question: card.question, quote: card.quote || '' };
     state.operation = request.operation;
     state.focus = request.parent_ids[0];
     state.selected = new Set(request.parent_ids);
@@ -458,10 +516,21 @@ const actions = {
   },
   'card-menu': () => modal('卡片操作', `<div class="dialog-menu"><button data-action="copy-answer">复制回答</button>${!state.shared ? '<button data-action="copy-node">从这里复制新对话</button><button data-action="share">分享这条思考路径</button><button data-action="archive">归档这张卡片</button>' : '<button data-action="import-current">复制到我的对话</button>'}</div>`),
   'copy-answer': () => { closeDialog(); return copyText(current()?.answer || ''); },
-  'copy-node': async () => { if (state.busy) return toast('请先等待当前回答完成，或点击停止'); const session = await post(`/api/sessions/${state.session.id}/copy`, { card_id: state.focus }); closeDialog(); acceptSession(session); localStorage.setItem('gitchat.session', session.id); await refreshSessions(); render(); },
+  'copy-node': async () => { if (state.busy) return toast('请先等待当前回答完成，或点击停止'); const navigation = ++navigationVersion; const session = await post(`/api/sessions/${state.session.id}/copy`, { card_id: state.focus }); if (navigation !== navigationVersion || state.busy) return; closeDialog(); acceptSession(session); localStorage.setItem('gitchat.session', session.id); await refreshSessions(); render(); },
   'share': () => shareCard(),
   'copy-share': () => copyText($('#share-url').value),
-  'archive': async () => { await patch(state.focus, { archived: true }); closeDialog(); const next = realCards().find(card => !card.archived); state.focus = next?.id || state.session.root_id; state.view = 'overview'; render(); toast('已归档，可在归档与历史中恢复'); },
+  'archive': async () => {
+    if (state.busy) return toast('请先等待当前回答完成，或点击停止');
+    const sessionID = state.session.id;
+    await patch(state.focus, { archived: true }, sessionID);
+    if (state.session?.id !== sessionID) return;
+    closeDialog();
+    const next = realCards().find(card => !card.archived);
+    await focusCard(next?.id || state.session.root_id);
+    state.view = 'overview';
+    render();
+    toast('已归档，可在归档与历史中恢复');
+  },
   'session-menu': () => modal('对话操作', `<div class="dialog-menu"><button data-action="new">开始新的探索</button>${state.session && !state.shared ? '<button data-action="export">导出对话 JSON</button><button class="danger" data-action="delete-dialog">删除当前对话</button>' : ''}<button data-action="import">导入分享</button></div>`),
   'export': () => { closeDialog(); const anchor = document.createElement('a'); anchor.href = `/api/sessions/${state.session.id}/export`; anchor.download = `gitchat-${state.session.id}.json`; anchor.click(); },
   'delete-dialog': () => modal('删除这次对话？', '<p>这次对话中的卡片将被删除。已经生成的分享快照会继续保留。</p><div class="dialog-actions"><button class="secondary" data-action="close-dialog">取消</button><button class="send-button" data-action="delete-session">确认删除</button></div>'),
@@ -511,16 +580,20 @@ window.addEventListener('resize', () => { if (state.view === 'overview') request
 let gesture = null;
 function distance(touches) { return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY); }
 $('#main').addEventListener('touchstart', event => {
-  if (event.touches.length === 2) gesture = { pinch: distance(event.touches) };
+  if (event.touches.length === 2) {
+    event.preventDefault();
+    gesture = { pinch: distance(event.touches) };
+  }
   else if (event.touches.length === 1 && event.target.closest('.thought-card') && !event.target.closest('button,textarea,input,a')) {
     gesture = { x: event.touches[0].clientX, y: event.touches[0].clientY, start: performance.now(), content: event.target.closest('.answer') };
   }
-}, { passive: true });
+}, { passive: false });
 $('#main').addEventListener('touchmove', event => {
+  if (event.touches.length === 2) event.preventDefault();
   if (gesture?.pinch && event.touches.length === 2 && Math.abs(distance(event.touches) - gesture.pinch) > 35) {
     state.view = 'overview'; gesture = null; render();
   }
-}, { passive: true });
+}, { passive: false });
 $('#main').addEventListener('touchend', event => {
   const start = gesture; gesture = null;
   if (!start || start.pinch || state.busy || state.compose || !event.changedTouches.length) return;
