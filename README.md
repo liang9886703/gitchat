@@ -119,3 +119,18 @@ node --check web/app.js
 - `web` 包含内嵌页面、样式、交互和思维图绘制。
 
 此实现采用单服务部署和本地持久化。文档中的付费订阅、模型训练与商业收益指标需要相应的支付、训练数据和运营系统支持。
+
+## 浏览器可视化回归
+
+需要 Node.js 20 或以上版本和 Chrome/Chromium。
+
+```sh
+npm ci
+# 没有系统 Chrome 时安装测试浏览器
+npx playwright install chromium
+npm run test:e2e
+```
+
+脚本自动构建并启动真实 Go 应用，以临时数据目录和本地可控模型服务运行。桌面、手机手势和异常恢复三个套件逐项操作界面、核对持久化结果并保存截图。结果与可浏览截图报告分别位于 `test-results/results.json` 和 `test-results/report.html`。报告出现任一失败，命令会返回非零退出码。
+
+可用 `npm run test:e2e -- mobile` 单独复测手机端，`HEADED=1 npm run test:e2e` 显示浏览器。`PLAYWRIGHT_CHROMIUM_EXECUTABLE` 可指定浏览器路径，`GITCHAT_TEST_OUTPUT` 可指定报告目录。完整范围见 [浏览器测试说明](tests/browser/README.md)。

@@ -5,3 +5,5 @@ docs
 gocache
 gobuildcache
 *.log
+node_modules
+test-results
