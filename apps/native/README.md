@@ -38,6 +38,12 @@ npm run ios:build
 
 真机 iOS 安装和 TestFlight/App Store 分发需要 Apple 开发者团队、签名证书和描述文件；Android 正式分发需自己的 release keystore。仓库不会生成或托管发布密钥，也不会自动上架。
 
+`Signed iPhone package` 工作流用于真正的设备 IPA，需手动触发。在仓库的 `ios-signing` Environment 中设置变量 `APPLE_DEVELOPMENT_TEAM`，以及 Secrets `IOS_CERTIFICATE`（P12 的 Base64）、`IOS_CERTIFICATE_PASSWORD` 和 `IOS_MOBILE_PROVISION`（描述文件的 Base64）。证书和描述文件需匹配 `com.gitchat.qiuzhi` 与所选导出方式。工作流只保存 IPA 构建产物，不上传 TestFlight 或上架；不要把证书、私钥或密码提交到 Git。签名输入沿用 [Tauri 官方 iOS 签名接口](https://v2.tauri.app/distribute/sign/ios/)。
+
+Android 编译使用 JDK 21、`platforms;android-37.0`、`build-tools;37.0.0` 与 NDK `27.2.12479018`；最低运行版本仍为 Android 8。新版 SDK 的平台包名包含 `.0`，使用旧的 `platforms;android-37` 名称会下载失败。
+
+`android:build` 默认去掉 Rust 调试符号，避免把大型符号表发给测试用户；仍是可调试、开发签名的 APK。需要符号时设置 `CARGO_PROFILE_DEV_DEBUG=2 CARGO_PROFILE_DEV_STRIP=none`。Android 链接器显式生成 16 KiB 对齐的 ELF；CI 同时检查 APK 签名、ZIP 对齐与每个原生库的 LOAD 段。可独立执行 `python3 scripts/verify-android.py path/to/app.apk`，它不会把“压缩包对齐”误当作“原生库对齐”。
+
 ## 连接与隔离
 
 - 客户端校验服务器根地址及 `/api/config`，远程仅接受 HTTPS；HTTP 仅用于 `localhost`、IPv4/IPv6 回环开发地址。

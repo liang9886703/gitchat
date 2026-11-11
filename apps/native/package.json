@@ -9,7 +9,7 @@
     "dev": "npm run prepare:desktop && tauri dev",
     "build": "npm run prepare:desktop && tauri build",
     "android:init": "tauri android init --ci",
-    "android:build": "tauri android build --debug --apk",
+    "android:build": "node scripts/build-android.mjs",
     "ios:init": "tauri ios init --ci",
     "ios:build": "tauri ios build --debug --target aarch64-sim --no-sign --archive-only",
     "test": "node --test tests/*.test.mjs",

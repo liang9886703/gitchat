@@ -44,4 +44,8 @@ Go 测试还覆盖 Windows/Unix 文件锁接口、中文空格路径、动态端
 
 当前本机验证：Chromium 92/92、WebKit 30/30；原生连接页与权限检查 4/4、Rust 测试 4/4；Go race 与 vet 通过。Mac arm64 调试 `.app` 已构建，ad-hoc 签名校验通过，实际进程启动检查通过。原生窗口自动化未完成，浏览器中的原生模式检查不能替代真机交互。所有浏览器场景使用本地可控模型协议服务；外部模型服务与真实密钥未参与本轮测试。
 
+Android arm64 独立 APK 已在本机实际构建，最低 Android 8、目标 Android 17。开发签名、APK ZIP 16 KiB 对齐、包中全部原生库 ELF LOAD 段 16 KiB 对齐均通过。检查曾捕获默认链接器产生的 4 KiB 原生库，修复后重建通过；此检查已纳入 CI。APK 使用调试签名，真机键盘、系统分享、设备返回和网络切换仍待设备验证。
+
+iPhone 的设备 IPA 由手动工作流 `Signed iPhone package` 提供，需匹配的团队与签名配置。本机仅有 Command Line Tools，没有完整 Xcode；本轮尚未产出可安装 iPhone 包。未签名模拟器归档同样不能当作 iPhone 安装包。
+
 官方依据：[Tauri 平台依赖](https://v2.tauri.app/start/prerequisites/)、[Tauri 权限](https://v2.tauri.app/security/capabilities/)、[Web App Manifest](https://web.dev/learn/pwa/web-app-manifest)、[Apple Mac Web App](https://support.apple.com/en-gb/104996)、[Microsoft PWA](https://learn.microsoft.com/microsoft-edge/progressive-web-apps-chromium/how-to/)。
