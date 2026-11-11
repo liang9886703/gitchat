@@ -23,6 +23,15 @@ npm run tauri -- build --bundles app
 
 `GITCHAT_NATIVE_TARGET` 可指定 Go sidecar 的交叉编译目标，例如 `x86_64-apple-darwin` 或 `x86_64-pc-windows-msvc`；Tauri 的 `--target` 必须与其保持一致。当前打包脚本支持 Mac arm64/x64 和 Windows arm64/x64。Windows 的 Rust 工具链与相应 C++ 编译器必须在目标机器准备好。
 
+如果 Windows CI 暂不可用，macOS 可依照 [Tauri 官方跨编译流程](https://v2.tauri.app/distribute/windows-installer/)准备 LLVM/LLD、NSIS、`cargo-xwin` 与 `x86_64-pc-windows-msvc` Rust 目标，然后执行：
+
+```sh
+GITCHAT_NATIVE_TARGET=x86_64-pc-windows-msvc npm run prepare:desktop
+npm run tauri -- build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis --ci
+```
+
+跨编译会使用微软官方 CRT/SDK，生成未签名 NSIS 安装包；构建成功仍需 Windows 实机验证。交付使用 release 构建以隐藏调试控制台，Go 子进程也设置了 `CREATE_NO_WINDOW`。
+
 ## 手机工程
 
 Android 需要 JDK 21、Android SDK/NDK、Rust Android 目标；iOS 需要 macOS 上的完整 Xcode、iOS SDK、CocoaPods 和 Rust iOS 目标。生成的原生工程与构建输出不提交 Git，由锁定的 Tauri CLI 重建。

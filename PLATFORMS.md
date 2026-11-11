@@ -40,11 +40,13 @@ TLS 反向代理设置 `GITCHAT_SECURE_COOKIES=1`。服务不信任任意 `X-For
 
 Go 测试还覆盖 Windows/Unix 文件锁接口、中文空格路径、动态端口、readiness 原子写入、stdin EOF 退出、持久化重启、配对并发消费和凭据隔离。macOS/Windows 后端已交叉编译；Windows 原生运行仍待目标环境验证。
 
-`Four-platform clients` CI 配置了 Mac `.app`、Windows NSIS、Android 调试 APK 与 iOS 未签名模拟器归档。2026-11-11 的首次四端任务在执行步骤前被 GitHub 拒绝，注释明确为账户账单问题导致锁定；这不是构建通过，需账户恢复后重跑。原生应用的构建成功、模拟器运行、真机安装与商店发布是不同阶段。iPhone 真机需要 Apple 开发者签名和描述文件；Android 正式发布需要 release keystore。本仓库不会自动上架、发布正式签名包或生成发布密钥。
+`Four-platform clients` CI 配置了 Mac `.app`、Windows NSIS、Android 调试 APK 与 iOS 未签名模拟器归档。2026-11-11 的四端任务因 GitHub 账户级限制未获 runner 执行；这不是构建通过，需运行条件恢复后重跑。原生应用的构建成功、模拟器运行、真机安装与商店发布是不同阶段。iPhone 真机需要 Apple 开发者签名和描述文件；Android 正式发布需要 release keystore。本仓库不会自动上架、发布正式签名包或生成发布密钥。
 
 当前本机验证：Chromium 92/92、WebKit 30/30；原生连接页与权限检查 4/4、Rust 测试 4/4；Go race 与 vet 通过。Mac arm64 调试 `.app` 已构建，ad-hoc 签名校验通过，实际进程启动检查通过。原生窗口自动化未完成，浏览器中的原生模式检查不能替代真机交互。所有浏览器场景使用本地可控模型协议服务；外部模型服务与真实密钥未参与本轮测试。
 
 Android arm64 独立 APK 已在本机实际构建，最低 Android 8、目标 Android 17。开发签名、APK ZIP 16 KiB 对齐、包中全部原生库 ELF LOAD 段 16 KiB 对齐均通过。检查曾捕获默认链接器产生的 4 KiB 原生库，修复后重建通过；此检查已纳入 CI。APK 使用调试签名，真机键盘、系统分享、设备返回和网络切换仍待设备验证。
+
+Windows x64 独立 NSIS 安装包已通过 macOS 上的 `cargo-xwin` 实际交叉编译和打包，使用微软官方 CRT/SDK。交付为 release 构建，PE 检查确认主程序为 x64 GUI 子系统，安装脚本包含 Go 服务；安装包未做 Windows 代码签名，尚未执行 Windows 实机安装与运行测试。
 
 iPhone 的设备 IPA 由手动工作流 `Signed iPhone package` 提供，需匹配的团队与签名配置。本机仅有 Command Line Tools，没有完整 Xcode；本轮尚未产出可安装 iPhone 包。未签名模拟器归档同样不能当作 iPhone 安装包。
 
