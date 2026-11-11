@@ -2,7 +2,6 @@ package modelServer
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,7 +52,7 @@ func NewProvider(cfg *config.Config) (Provider, error) {
 	if copyConfig.Mode != "demo" && copyConfig.Mode != "openai" {
 		return nil, errors.New("unknown model mode")
 	}
-	if copyConfig.Mode == "openai" && copyConfig.Namespace[0].Chatbot.APIKey == "" {
+	if copyConfig.Mode == "openai" && copyConfig.Namespace[0].Chatbot.APIKey == "" && copyConfig.Namespace[0].Chatbot.Protocol != "ollama" && !copyConfig.Namespace[0].Chatbot.NoAuth {
 		return nil, errors.New("model API key is missing")
 	}
 	if copyConfig.TimeoutSeconds < 1 || copyConfig.TimeoutSeconds > 120 {
@@ -74,7 +73,10 @@ func NewProvider(cfg *config.Config) (Provider, error) {
 			return nil, errors.New("invalid model endpoint")
 		}
 	}
-	return &provider{cfg: copyConfig, client: &http.Client{Timeout: time.Duration(copyConfig.TimeoutSeconds) * time.Second}}, nil
+	if !ValidProtocol(copyConfig.Namespace[0].Chatbot.Protocol) {
+		return nil, errors.New("unsupported model protocol")
+	}
+	return &provider{cfg: copyConfig, client: &http.Client{Timeout: time.Duration(copyConfig.TimeoutSeconds) * time.Second, CheckRedirect: rejectRedirect}}, nil
 }
 
 func (p *provider) Generate(ctx context.Context, request Request, emit func(string) error) (Result, error) {
@@ -279,59 +281,24 @@ func safeFailure(err error) string {
 type providerStatusError struct{ status int }
 
 func (e *providerStatusError) Error() string {
-	return fmt.Sprintf("provider returned HTTP %d", e.status)
+	hint := "模型服务请求失败"
+	switch e.status {
+	case 401:
+		hint = "密钥无效或未填写"
+	case 403:
+		hint = "密钥无权使用此服务或模型"
+	case 404:
+		hint = "请检查 API 地址和模型 ID"
+	case 429:
+		hint = "请求受限或额度不足，请稍后重试"
+	default:
+		if e.status >= 500 {
+			hint = "模型服务暂时不可用，请稍后重试"
+		}
+	}
+	return fmt.Sprintf("%s（HTTP %d）", hint, e.status)
 }
 
-// complete accepts both JSON and standards-compliant SSE from OpenAI-compatible providers.
-func (p *provider) complete(ctx context.Context, model string, messages []Message, structured bool) (string, error) {
-	bot := p.cfg.Namespace[0].Chatbot
-	body := map[string]any{"model": model, "messages": messages, "stream": bot.IsStream, "max_tokens": bot.MaxTokens}
-	if bot.MaxTokens <= 0 {
-		body["max_tokens"] = 2400
-	}
-	if structured {
-		body["response_format"] = map[string]string{"type": "json_object"}
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return "", err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(bot.BaseURL, "/")+"/chat/completions", bytes.NewReader(payload))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+bot.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	response, err := p.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("model request failed: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", &providerStatusError{response.StatusCode}
-	}
-	reader := io.LimitReader(response.Body, 2<<20)
-	if strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") {
-		return readCompletionSSE(reader)
-	}
-	var result struct {
-		Choices []struct {
-			Message      Message `json:"message"`
-			FinishReason string  `json:"finish_reason"`
-		} `json:"choices"`
-	}
-	if err = json.NewDecoder(reader).Decode(&result); err != nil {
-		return "", errors.New("invalid provider response")
-	}
-	if len(result.Choices) == 0 {
-		return "", errors.New("provider returned no choices")
-	}
-	if result.Choices[0].FinishReason == "length" {
-		return "", errors.New("provider response exceeded token budget")
-	}
-	return result.Choices[0].Message.Content, nil
-}
 func readCompletionSSE(reader io.Reader) (string, error) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 4096), 1<<20)

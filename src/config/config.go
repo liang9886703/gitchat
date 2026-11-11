@@ -12,11 +12,15 @@ import (
 )
 
 type Chatbot struct {
-	BaseURL   string `yaml:"baseURL" json:"base_url"`
-	Model     string `yaml:"model" json:"model"`
-	MaxTokens int    `yaml:"maxTokens" json:"max_tokens"`
-	IsStream  bool   `yaml:"isStream" json:"is_stream"`
-	APIKey    string `yaml:"-" json:"-"`
+	NoAuth         bool   `yaml:"noAuth" json:"no_auth"`
+	Protocol       string `yaml:"protocol" json:"protocol"`
+	JSONMode       string `yaml:"jsonMode" json:"json_mode"`
+	TokenParameter string `yaml:"tokenParameter" json:"token_parameter"`
+	BaseURL        string `yaml:"baseURL" json:"base_url"`
+	Model          string `yaml:"model" json:"model"`
+	MaxTokens      int    `yaml:"maxTokens" json:"max_tokens"`
+	IsStream       bool   `yaml:"isStream" json:"is_stream"`
+	APIKey         string `yaml:"-" json:"-"`
 }
 type Namespace struct {
 	Name      string  `yaml:"name"`
@@ -202,7 +206,7 @@ func (c *Config) Validate() error {
 			return errors.New("namespace name and chatbotId are required")
 		}
 		if c.Mode == "openai" {
-			if ns.Chatbot.APIKey == "" {
+			if ns.Chatbot.APIKey == "" && ns.Chatbot.Protocol != "ollama" && !ns.Chatbot.NoAuth {
 				return fmt.Errorf("missing API key for chatbot %s", ns.ChatbotID)
 			}
 			if err := validURL(ns.Chatbot.BaseURL); err != nil {

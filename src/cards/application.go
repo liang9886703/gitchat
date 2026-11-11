@@ -111,6 +111,10 @@ func (cs *CardServer) Chat(ctx context.Context, owner, sessionID string, input C
 	if memory.Goal == "" {
 		memory.Goal = input.Question
 	}
+	selectedProvider, err := s.providerForOwner(owner)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
 	card := Card{ID: newID(), ParentIDs: parents, Question: input.Question, Quote: input.Quote, Title: shortTitle(input.Question), Status: "pending", Operation: input.Operation, Depth: depth, CreatedAt: now, UpdatedAt: now, Suggestions: []modelServer.Suggestion{}, Memory: memory}
 	reqQuestion := input.Question
@@ -142,14 +146,14 @@ func (cs *CardServer) Chat(ctx context.Context, owner, sessionID string, input C
 	cardCopy := clone(card)
 	ch <- Event{Type: "created", Card: &cardCopy}
 	s.wg.Add(1)
-	go s.generate(runCtx, cancel, owner, sessionID, card.ID, req, ch)
+	go s.generate(runCtx, cancel, owner, sessionID, card.ID, req, selectedProvider, ch)
 	return ch, nil
 }
-func (s *serverState) generate(ctx context.Context, cancel context.CancelFunc, owner, sessionID, cardID string, req modelServer.Request, ch chan Event) {
+func (s *serverState) generate(ctx context.Context, cancel context.CancelFunc, owner, sessionID, cardID string, req modelServer.Request, selectedProvider modelServer.Provider, ch chan Event) {
 	defer s.wg.Done()
 	defer close(ch)
 	defer cancel()
-	result, err := s.provider.Generate(ctx, req, func(delta string) error {
+	result, err := selectedProvider.Generate(ctx, req, func(delta string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

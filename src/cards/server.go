@@ -28,6 +28,7 @@ type requestRecord struct {
 	Input  ChatInput `json:"input"`
 }
 type database struct {
+	Models      map[string]ModelSettings  `json:"model_settings,omitempty"`
 	Version     int                       `json:"version"`
 	Sessions    map[string]*storedSession `json:"sessions"`
 	Shares      map[string]SessionView    `json:"shares"`
@@ -35,16 +36,18 @@ type database struct {
 	Stats       map[string]map[string]int `json:"stats"`
 }
 type serverState struct {
-	mu       sync.Mutex
-	db       database
-	provider modelServer.Provider
-	apps     []AppView
-	prompts  map[string]string
-	file     string
-	lockFile *os.File
-	active   map[string]context.CancelFunc
-	closed   bool
-	wg       sync.WaitGroup
+	mu         sync.Mutex
+	db         database
+	provider   modelServer.Provider
+	baseConfig config.Config
+	secretKey  []byte
+	apps       []AppView
+	prompts    map[string]string
+	file       string
+	lockFile   *os.File
+	active     map[string]context.CancelFunc
+	closed     bool
+	wg         sync.WaitGroup
 }
 
 // The state pointer keeps the legacy value-returning constructor safe to copy.
@@ -64,7 +67,7 @@ func CreateCardServerWithProvider(cfg *config.Config, p modelServer.Provider) (C
 	if cfg == nil || p == nil {
 		return CardServer{}, fmt.Errorf("%w: config and provider are required", ErrInvalid)
 	}
-	s := &serverState{provider: p, active: map[string]context.CancelFunc{}, prompts: map[string]string{}, db: database{Version: 1, Sessions: map[string]*storedSession{}, Shares: map[string]SessionView{}, Preferences: map[string]Preferences{}, Stats: map[string]map[string]int{}}}
+	s := &serverState{baseConfig: *cfg, provider: p, active: map[string]context.CancelFunc{}, prompts: map[string]string{}, db: database{Models: map[string]ModelSettings{}, Version: 1, Sessions: map[string]*storedSession{}, Shares: map[string]SessionView{}, Preferences: map[string]Preferences{}, Stats: map[string]map[string]int{}}}
 	for _, t := range cfg.Chattemplate {
 		name := strings.TrimSpace(t.Name)
 		if name == "" {
@@ -124,6 +127,9 @@ func (s *serverState) load() error {
 	}
 	if db.Version != 1 || db.Sessions == nil || db.Shares == nil || db.Preferences == nil || db.Stats == nil {
 		return errors.New("unsupported or incomplete saved data")
+	}
+	if db.Models == nil {
+		db.Models = map[string]ModelSettings{}
 	}
 	s.db = db
 	for id, session := range db.Sessions {

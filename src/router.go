@@ -32,10 +32,6 @@ func GetCardsServer() (*cards.CardServer, error) {
 func SetupRouter(server *cards.CardServer, configurations ...*config.Config) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
-	mode := "demo"
-	if len(configurations) > 0 {
-		mode = configurations[0].Mode
-	}
 	r.Use(func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("Referrer-Policy", "same-origin")
@@ -76,8 +72,10 @@ func SetupRouter(server *cards.CardServer, configurations ...*config.Config) *gi
 	})
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	registerDevices(r)
+	registerModels(r, server, configurations)
 	r.GET("/api/config", func(c *gin.Context) {
-		c.JSON(200, gin.H{"mode": mode, "model_configured": mode != "demo", "apps": server.Apps(), "workspace_id": workspaceFingerprint(c.GetString("owner"))})
+		status := server.ModelStatus(c.GetString("owner"))
+		c.JSON(200, gin.H{"mode": status.Mode, "model_configured": status.Configured, "model": status.Model, "protocol": status.Protocol, "connection_name": status.Name, "apps": server.Apps(), "workspace_id": workspaceFingerprint(c.GetString("owner"))})
 	})
 	r.GET("/api/sessions", func(c *gin.Context) { c.JSON(200, server.ListSessions(c.GetString("owner"))) })
 	r.POST("/api/sessions", func(c *gin.Context) {
@@ -210,7 +208,7 @@ func SetupRouter(server *cards.CardServer, configurations ...*config.Config) *gi
 		case "/manifest.webmanifest":
 			c.Header("Content-Type", "application/manifest+json")
 			files.ServeHTTP(c.Writer, c.Request)
-		case "/", "/index.html", "/app.js", "/style.css", "/styles.css", "/platform.js", "/platform.css", "/offline.html",
+		case "/", "/index.html", "/app.js", "/style.css", "/styles.css", "/platform.js", "/platform.css", "/models.js", "/models.css", "/offline.html",
 			"/icons/icon.svg", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/maskable-512.png", "/icons/apple-touch-icon.png":
 			files.ServeHTTP(c.Writer, c.Request)
 		default:
