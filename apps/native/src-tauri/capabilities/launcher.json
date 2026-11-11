@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "launcher",
+  "description": "Only the bundled connection screen can choose a server or start the fixed desktop sidecar. Remote pages receive no native permissions.",
+  "local": true,
+  "webviews": ["main"],
+  "permissions": ["allow-connection-info", "allow-connect-remote", "allow-connect-local"]
+}

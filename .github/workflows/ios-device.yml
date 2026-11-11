@@ -1,0 +1,58 @@
+name: Signed iPhone package
+
+on:
+  workflow_dispatch:
+    inputs:
+      export_method:
+        description: Export method matching the supplied Apple profile
+        required: true
+        default: app-store-connect
+        type: choice
+        options: [app-store-connect, release-testing, debugging]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-device-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    environment: ios-signing
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/native/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native/src-tauri
+      - run: npm ci
+      - name: Build signed device IPA
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ vars.APPLE_DEVELOPMENT_TEAM }}
+          IOS_CERTIFICATE: ${{ secrets.IOS_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.IOS_MOBILE_PROVISION }}
+          EXPORT_METHOD: ${{ inputs.export_method }}
+        run: |
+          node --input-type=module -e 'const missing=["APPLE_DEVELOPMENT_TEAM","IOS_CERTIFICATE","IOS_CERTIFICATE_PASSWORD","IOS_MOBILE_PROVISION"].filter(k=>!process.env[k]); if(missing.length){console.error("Configure ios-signing environment values: "+missing.join(", "));process.exit(1)}'
+          npm run tauri -- ios init --ci --skip-targets-install
+          npm run tauri -- ios build --ci --target aarch64 --export-method "$EXPORT_METHOD" --build-number "$GITHUB_RUN_NUMBER"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qiuzhi-iPhone-${{ inputs.export_method }}
+          path: apps/native/src-tauri/gen/apple/build/**/*.ipa
+          if-no-files-found: error
+          retention-days: 7

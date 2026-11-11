@@ -1,25 +1,16 @@
 services:
   gitchat:
-    image: bitnami/golang:latest
-    container_name: gitchat
-    working_dir: /work
-    stdin_open: true   # 等同 -i
-    tty: true          # 等同 -t
-    command: ["sh"]
+    build: .
     ports:
-      - "8002:8002"
+      - "127.0.0.1:8002:8002"
     environment:
-      - TZ=Asia/Shanghai
+      GITCHAT_ADDR: "0.0.0.0:8002"
+      DATA_DIR: /data
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     volumes:
-      - "C:/Users/Administrator/Documents/myContainer/gitchat:/work"
-      - "C:/Users/Administrator/Documents/myContainer/gitchat/gocache:/go/pkg/mod"
-      - "C:/Users/Administrator/Documents/myContainer/gitchat/gobuildcache:/root/.cache/go-build"
-      - "C:/Users/Administrator/.ssh:/root/.ssh"
-      - "C:/Users/Administrator/.gitconfig:/root/.gitconfig"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: ["gpu"]   # 等同 --gpus all
+      - gitchat-data:/data
+    restart: unless-stopped
+volumes:
+  gitchat-data:

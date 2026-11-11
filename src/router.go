@@ -1,269 +1,384 @@
 package router
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"gitchat/src/cards"
-	"gitchat/src/config"
-	"gitchat/src/modelServer"
+	"io"
+	"io/fs"
+	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
-	"github.com/gin-contrib/cors"
+	"gitchat/src/cards"
+	"gitchat/src/config"
+	"gitchat/web"
 	"github.com/gin-gonic/gin"
 )
 
-type msgContent struct {
-	ContentType string   `json:"type,omitempty"`
-	Parts       []string `json:"text,omitempty"`
-}
-
-type messages struct {
-	Role       string       `json:"role,omitempty"`
-	Content    []msgContent `json:"content,omitempty"`
-	CreateTime string       `json:"createTime,omitempty"`
-	ReqID      string       `json:"reqId,omitempty"`
-}
-
-// 通过对chatgpt抓包后选了一些字段放这
-type userRequest struct {
-	AppID   cards.AppId     `json:"appid,omitempty"`
-	Session cards.SessionId `json:"session,omitempty"`
-	Version cards.Version   `json:"version,omitempty"`
-
-	Action  string `json:"action,omitempty"`
-	Stream  bool   `json:"stream,omitempty"`
-	IfFirst bool   `json:"ifFirst,omitempty"`
-
-	Message  messages `json:"message,omitempty"`
-	Model    string   `json:"model,omitempty"`
-	ParentID string   `json:"parentId,omitempty"`
-	Timezone string   `json:"timezone,omitempty"`
-
-	Language string `json:"languages,omitempty"`
-}
-
-type streamMessage struct {
-	ID         string     `json:"id,omitempty"`
-	CreateTime string     `json:"create_time,omitempty"`
-	UpdateTime string     `json:"update_time,omitempty"`
-	Content    msgContent `json:"content,omitempty"`
-	Status     string     `json:"status,omitempty"` // "in_progress", "completed" 等
-}
-
-type userResponse struct {
-	Message *streamMessage  `json:"message,omitempty"`
-	AppID   cards.AppId     `json:"appid,omitempty"`
-	Session cards.SessionId `json:"session,omitempty"`
-	Version cards.Version   `json:"version,omitempty"`
-	Error   string          `json:"error,omitempty"` // 错误信息，null 或字符串
-}
-
 func GetCardsServer() (*cards.CardServer, error) {
-	configs, err := config.GetConfig()
+	cfg, err := config.GetConfig()
 	if err != nil {
 		return nil, err
 	}
-	cardsServer, err := cards.CreateCardServer(configs)
-	if err != nil {
-		return nil, err
-	}
-	return &cardsServer, nil
+	server, err := cards.CreateCardServer(cfg)
+	return &server, err
 }
 
-func buildStreamMessage(msg modelServer.StreamMessage, req userRequest, sessionId cards.SessionId, version cards.Version) (userResponse, error) {
-
-	return userResponse{
-		Message: &streamMessage{
-			ID:         "",
-			CreateTime: "",
-			UpdateTime: time.Now().Format("2006-01-02 15:04:05"), //todo
-			Status:     "success",                                //todo
-			Content: msgContent{
-				ContentType: "text",
-				Parts:       []string{msg.Message},
-			},
-		},
-		AppID:   req.AppID,
-		Session: sessionId,
-		Version: version,
-		Error:   "",
-	}, nil
-}
-
-func buildErrorMessage(err error, req userRequest, version cards.Version) userResponse {
-	return userResponse{
-		Error:   fmt.Sprintf("error: %v", err),
-		AppID:   req.AppID,
-		Session: req.Session,
-		Version: version,
-	}
-}
-
-func sendStreamMessage(c *gin.Context, ctx modelServer.RecvStreamContext, req userRequest, sessionId cards.SessionId, version cards.Version) {
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-
-	// 使用 Flusher 确保实时发送数据
-	flusher, ok := c.Writer.(http.Flusher)
-	if !ok {
-		c.String(http.StatusInternalServerError, "Streaming unsupported!")
-		return
-	}
-
-	var res userResponse
-	var err error
-	for content := range *ctx.Ch {
-		fmt.Printf("start receive stream message")
-		fmt.Printf("content: %v", content)
-		switch content.Type {
-		case modelServer.SendStreamContextTypeStream:
-			c.SSEvent("stream", res)
-			res, err = buildStreamMessage(content, req, sessionId, version)
-			//fmt.Printf("%s", content.Message)
-		case modelServer.SendStreamContextTypeEnd:
-			//fmt.Printf("%s\n", content.Message)
-			c.SSEvent("stream", res)
+// SetupRouter serves the browser application and both API generations.
+func SetupRouter(server *cards.CardServer, configurations ...*config.Config) *gin.Engine {
+	r := gin.New()
+	r.Use(gin.Recovery())
+	r.Use(func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Referrer-Policy", "same-origin")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Cache-Control", "no-store")
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead && c.Request.Method != http.MethodOptions {
+			if origin := c.GetHeader("Origin"); origin != "" {
+				u, err := url.Parse(origin)
+				if err != nil || u.Host != c.Request.Host {
+					c.AbortWithStatusJSON(403, gin.H{"error": "跨站请求被拒绝"})
+					return
+				}
+			}
+			if c.GetHeader("Sec-Fetch-Site") == "cross-site" {
+				c.AbortWithStatusJSON(403, gin.H{"error": "跨站请求被拒绝"})
+				return
+			}
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20)
+		}
+		owner, err := c.Cookie("gitchat_owner")
+		decoded, decodeErr := hex.DecodeString(owner)
+		if err != nil || decodeErr != nil || len(decoded) != 32 {
+			owner, err = newOwner()
+			if err != nil {
+				c.AbortWithStatus(500)
+				return
+			}
+			setOwnerCookie(c, owner)
+		}
+		c.Set("owner", owner)
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead && c.Request.Method != http.MethodOptions {
+			if expected := c.GetHeader("X-GitChat-Workspace"); expected != "" && expected != workspaceFingerprint(owner) {
+				c.AbortWithStatusJSON(http.StatusConflict, gin.H{"error": "空间已切换，请刷新页面后继续"})
+				return
+			}
+		}
+		c.Next()
+	})
+	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	registerDevices(r)
+	registerModels(r, server, configurations)
+	r.GET("/api/config", func(c *gin.Context) {
+		status := server.ModelStatus(c.GetString("owner"))
+		c.JSON(200, gin.H{"mode": status.Mode, "model_configured": status.Configured, "model": status.Model, "protocol": status.Protocol, "connection_name": status.Name, "apps": server.Apps(), "workspace_id": workspaceFingerprint(c.GetString("owner"))})
+	})
+	r.GET("/api/sessions", func(c *gin.Context) { c.JSON(200, server.ListSessions(c.GetString("owner"))) })
+	r.POST("/api/sessions", func(c *gin.Context) {
+		var body struct {
+			AppID string `json:"app_id"`
+			Title string `json:"title"`
+		}
+		if !bind(c, &body) {
 			return
-			//res, err = buildStreamMessage(content, req, version)
-		case modelServer.SendStreamContextTypeError:
-			//fmt.Printf("%s\n", content.Message)
-			res = buildErrorMessage(err, req, version)
+		}
+		session, err := server.NewSession(c.GetString("owner"), body.AppID, body.Title)
+		respond(c, 201, session, err)
+	})
+	r.GET("/api/sessions/:id", func(c *gin.Context) {
+		s, e := server.GetSession(c.GetString("owner"), c.Param("id"))
+		respond(c, 200, s, e)
+	})
+	r.DELETE("/api/sessions/:id", func(c *gin.Context) {
+		respond(c, 200, gin.H{"ok": true}, server.DeleteSession(c.GetString("owner"), c.Param("id")))
+	})
+	r.GET("/api/sessions/:id/export", func(c *gin.Context) {
+		s, e := server.GetSession(c.GetString("owner"), c.Param("id"))
+		if e != nil {
+			apiError(c, e)
+			return
+		}
+		c.Header("Content-Disposition", `attachment; filename="gitchat-session.json"`)
+		c.IndentedJSON(200, s)
+	})
+	r.POST("/api/sessions/:id/chat", func(c *gin.Context) {
+		var input cards.ChatInput
+		if !bind(c, &input) {
+			return
+		}
+		events, err := server.Chat(c.Request.Context(), c.GetString("owner"), c.Param("id"), input)
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		streamHeaders(c)
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case event, ok := <-events:
+				if !ok {
+					return
+				}
+				if !writeEvent(c, "message", event) {
+					return
+				}
+			case <-ticker.C:
+				if _, err := fmt.Fprint(c.Writer, ": heartbeat\n\n"); err != nil {
+					return
+				}
+				c.Writer.Flush()
+			case <-c.Request.Context().Done():
+				return
+			}
+		}
+	})
+	r.POST("/api/sessions/:id/cards/:cardID/stop", func(c *gin.Context) {
+		respond(c, 200, gin.H{"ok": true}, server.Stop(c.GetString("owner"), c.Param("id"), c.Param("cardID")))
+	})
+	r.PATCH("/api/sessions/:id/cards/:cardID", func(c *gin.Context) {
+		var patch cards.CardPatch
+		if !bind(c, &patch) {
+			return
+		}
+		card, err := server.PatchCard(c.GetString("owner"), c.Param("id"), c.Param("cardID"), patch)
+		respond(c, 200, card, err)
+	})
+	r.POST("/api/sessions/:id/focus", func(c *gin.Context) {
+		var input struct {
+			CardID string `json:"card_id"`
+		}
+		if !bind(c, &input) {
+			return
+		}
+		respond(c, 200, gin.H{"ok": true}, server.Focus(c.GetString("owner"), c.Param("id"), input.CardID))
+	})
+	r.POST("/api/sessions/:id/copy", func(c *gin.Context) {
+		var input struct {
+			CardID string `json:"card_id"`
+		}
+		if !bind(c, &input) {
+			return
+		}
+		s, e := server.CopySession(c.GetString("owner"), c.Param("id"), input.CardID)
+		respond(c, 201, s, e)
+	})
+	r.POST("/api/sessions/:id/share", func(c *gin.Context) {
+		var input struct {
+			CardID string `json:"card_id"`
+		}
+		if !bind(c, &input) {
+			return
+		}
+		token, e := server.Share(c.GetString("owner"), c.Param("id"), input.CardID)
+		respond(c, 201, gin.H{"token": token, "url": "/?share=" + url.QueryEscape(token)}, e)
+	})
+	r.GET("/api/shares/:token", func(c *gin.Context) { s, e := server.GetShare(c.Param("token")); respond(c, 200, s, e) })
+	r.POST("/api/shares/:token/import", func(c *gin.Context) {
+		s, e := server.ImportShare(c.GetString("owner"), c.Param("token"))
+		respond(c, 201, s, e)
+	})
+	r.GET("/api/preferences", func(c *gin.Context) { c.JSON(200, server.GetPreferences(c.GetString("owner"))) })
+	r.PUT("/api/preferences", func(c *gin.Context) {
+		var p cards.Preferences
+		if !bind(c, &p) {
+			return
+		}
+		respond(c, 200, p, server.SetPreferences(c.GetString("owner"), p))
+	})
+	r.GET("/api/stats", func(c *gin.Context) { c.JSON(200, server.Stats(c.GetString("owner"))) })
+	r.POST("/g/:appid", legacyChat(server))
+	r.POST("/g/:appid/:session", legacyChat(server))
+	assets, _ := fs.Sub(web.FS, ".")
+	files := http.FileServer(http.FS(assets))
+	r.NoRoute(func(c *gin.Context) {
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
+			c.Status(404)
+			return
+		}
+		switch c.Request.URL.Path {
+		case "/sw.js":
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Service-Worker-Allowed", "/")
+			files.ServeHTTP(c.Writer, c.Request)
+		case "/manifest.webmanifest":
+			c.Header("Content-Type", "application/manifest+json")
+			files.ServeHTTP(c.Writer, c.Request)
+		case "/", "/index.html", "/app.js", "/style.css", "/styles.css", "/platform.js", "/platform.css", "/models.js", "/models.css", "/offline.html",
+			"/icons/icon.svg", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/maskable-512.png", "/icons/apple-touch-icon.png":
+			files.ServeHTTP(c.Writer, c.Request)
 		default:
-			//fmt.Printf("%s\n", content.Message)
-			res = buildErrorMessage(fmt.Errorf("unknown stream message type: %v", content.Type), req, version)
+			c.Status(404)
 		}
-		fmt.Printf("stream: %v", res)
-		fmt.Fprintf(c.Writer, "stream: %v", res)
-		flusher.Flush() // 立即发送到客户端
-	}
-}
-
-func firstChat(c *gin.Context, req userRequest, cardsServer *cards.CardServer) {
-	var (
-		ctx   modelServer.RecvStreamContext
-		appId cards.AppId = req.AppID
-	)
-
-	// 提供了appid，但是没有sessionid，则创建一个新session
-	sessionId, version, err := cardsServer.CreateNewSessionByApp(appId)
-	if err != nil {
-		return
-	}
-	fmt.Printf("创建一个新session,appId: %v,sessionId: %v,version: %v\n", appId, sessionId, version)
-	//todo暂时只支持文字
-	ctx, version, err = cardsServer.FirstStreamChatOnce(sessionId, version, req.Message.Content[0].Parts[0])
-	if err != nil {
-		return
-	}
-
-	if req.Stream {
-		sendStreamMessage(c, ctx, req, sessionId, version)
-	} else {
-		sendStreamMessage(c, ctx, req, sessionId, version)
-	}
-
-}
-
-func nextChat(c *gin.Context, req userRequest, cardsServer *cards.CardServer) {
-	var (
-		ctx       modelServer.RecvStreamContext
-		appId     cards.AppId     = req.AppID
-		sessionId cards.SessionId = req.Session
-		version   cards.Version   = req.Version
-		err       error
-	)
-
-	if sessionId.IsEmpty() {
-		res := buildErrorMessage(fmt.Errorf("sessionId is empty"), req, version)
-		c.JSON(http.StatusBadRequest, res)
-		return
-	}
-
-	if version.IsEmpty() {
-		res := buildErrorMessage(fmt.Errorf("version is empty"), req, version)
-		c.JSON(http.StatusBadRequest, res)
-		return
-	}
-
-	fmt.Printf("继续当前session的对话,appId: %v,sessionId: %v,version: %v\n", appId, sessionId, version)
-	// 提供了appid和sessionid，则继续当前session的对话
-	ctx, version, err = cardsServer.NextStreamChatOnce(sessionId, version, req.Message.Content[0].Parts[0])
-	if err != nil {
-		return
-	}
-
-	if req.Stream {
-		sendStreamMessage(c, ctx, req, sessionId, version)
-	} else {
-		sendStreamMessage(c, ctx, req, sessionId, version)
-	}
-
-}
-
-func SetupRouter(cardsServer *cards.CardServer) *gin.Engine {
-	r := gin.Default()
-
-	// 配置 CORS 中间件
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * time.Hour,
-	}))
-
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
-
-	//区分没有session的和有的两个路由
-	r.POST("/g/:appid", func(c *gin.Context) {
-
-		req := userRequest{}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		reqStr, err := json.Marshal(req)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		fmt.Printf("receive request: %s\n", string(reqStr))
-
-		if req.IfFirst {
-			req.AppID = cards.AppIdFromString(c.Param("appid"))
-			firstChat(c, req, cardsServer)
-		} else {
-			req.AppID = cards.AppIdFromString(c.Param("appid"))
-			req.Session = cards.SessionIdFromString(c.Param("session"))
-			nextChat(c, req, cardsServer)
-		}
-	})
-
-	r.POST("/g/:appid/:session", func(c *gin.Context) {
-
-		req := userRequest{}
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		req.AppID = cards.AppIdFromString(c.Param("appid"))
-		req.Session = cards.SessionIdFromString(c.Param("session"))
-
-		reqStr, err := json.Marshal(req)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		fmt.Printf("receive request: %s\n", string(reqStr))
-
-		nextChat(c, req, cardsServer)
 	})
 	return r
+}
+
+func bind(c *gin.Context, v any) bool {
+	decoder := json.NewDecoder(c.Request.Body)
+	if err := decoder.Decode(v); err != nil {
+		c.JSON(400, gin.H{"error": "请求需要有效的 JSON 内容"})
+		return false
+	}
+	// A second JSON value is never part of one API request.
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		c.JSON(400, gin.H{"error": "请求只能包含一个 JSON 对象"})
+		return false
+	}
+	return true
+}
+func respond(c *gin.Context, status int, v any, err error) {
+	if err != nil {
+		apiError(c, err)
+		return
+	}
+	c.JSON(status, v)
+}
+func apiError(c *gin.Context, err error) {
+	status := 500
+	switch {
+	case errors.Is(err, cards.ErrNotFound):
+		status = 404
+	case errors.Is(err, cards.ErrInvalid):
+		status = 400
+	case errors.Is(err, cards.ErrConflict):
+		status = 409
+	}
+	if status == 500 {
+		c.JSON(status, gin.H{"error": "操作失败，请检查服务器日志或重试"})
+		log.Printf("API error: %v", err)
+		return
+	}
+	c.JSON(status, gin.H{"error": err.Error()})
+}
+func streamHeaders(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("X-Accel-Buffering", "no")
+}
+func writeEvent(c *gin.Context, name string, value any) bool {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	if _, err = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", name, data); err != nil {
+		return false
+	}
+	c.Writer.Flush()
+	return true
+}
+
+type legacyRequest struct {
+	Version  cards.Version   `json:"version"`
+	Session  cards.SessionId `json:"session"`
+	IfFirst  bool            `json:"ifFirst"`
+	Stream   bool            `json:"stream"`
+	Action   string          `json:"action"`
+	ParentID string          `json:"parentId"`
+	Message  struct {
+		ReqID   string `json:"reqId"`
+		Content []struct {
+			Text []string `json:"text"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+func legacyChat(server *cards.CardServer) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req legacyRequest
+		if !bind(c, &req) {
+			return
+		}
+		var parts []string
+		for _, content := range req.Message.Content {
+			parts = append(parts, content.Text...)
+		}
+		question := strings.TrimSpace(strings.Join(parts, "\n"))
+		if question == "" {
+			c.JSON(400, gin.H{"error": "message.content[].text 不能为空"})
+			return
+		}
+		owner := c.GetString("owner")
+		appID := c.Param("appid")
+		apps := server.Apps()
+		found := false
+		for _, app := range apps {
+			if app.ID == appID {
+				found = true
+				break
+			}
+		}
+		if !found && len(apps) > 0 {
+			appID = apps[0].ID
+		}
+		sessionID := c.Param("session")
+		if sessionID == "" {
+			sessionID = req.Session.MainId
+		}
+		var session cards.SessionView
+		var err error
+		if req.IfFirst || sessionID == "" {
+			session, err = server.NewSession(owner, appID, question)
+		} else {
+			session, err = server.GetSession(owner, sessionID)
+		}
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		// Legacy default app aliases are accepted, explicit applications remain isolated.
+		if appID != session.AppID {
+			c.JSON(404, gin.H{"error": "session does not belong to application"})
+			return
+		}
+		parent := req.Version.MainId
+		if parent == "" {
+			parent = req.ParentID
+		}
+		if parent == "" {
+			parent = session.RootID
+		}
+		operation := req.Action
+		if operation == "" || operation == "next" {
+			operation = "deepen"
+		}
+		events, err := server.Chat(c.Request.Context(), owner, session.ID, cards.ChatInput{Operation: operation, ParentIDs: []string{parent}, Question: question, RequestID: req.Message.ReqID})
+		if err != nil {
+			apiError(c, err)
+			return
+		}
+		if req.Stream {
+			streamHeaders(c)
+		}
+		var current *cards.Card
+		for event := range events {
+			if event.Card != nil {
+				current = event.Card
+			}
+			version := ""
+			status := "in_progress"
+			content := event.Delta
+			if current != nil {
+				version = current.ID
+				status = current.Status
+			}
+			if event.Type == "completed" && !req.Stream && current != nil {
+				content = current.Answer
+			}
+			response := gin.H{"appid": cards.AppId{MainId: session.AppID}, "session": cards.SessionId{MainId: session.ID}, "version": cards.Version{MainId: version}, "message": gin.H{"status": status, "content": gin.H{"type": "text", "text": []string{content}}}, "error": event.Error}
+			if req.Stream {
+				if !writeEvent(c, "stream", response) {
+					return
+				}
+			} else if event.Type == "completed" || event.Type == "error" || event.Type == "cancelled" {
+				c.JSON(200, response)
+				return
+			}
+		}
+	}
 }

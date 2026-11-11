@@ -38,23 +38,25 @@ var testCases = []struct {
 // TestSendMessage 测试 SendMessage 函数
 func TestSendMessage(t *testing.T) {
 	//检查环境变量
-	if os.Getenv("OPENAI_API_KEY_0") == "" {
-		t.Skip("跳过测试：需要设置 OPENAI_API_KEY 环境变量")
+	if os.Getenv("GITCHAT_LIVE_TEST") != "1" || os.Getenv("OPENAI_API_KEY_0") == "" {
+		t.Skip("可选真实服务测试：设置 GITCHAT_LIVE_TEST=1 和 OPENAI_API_KEY_0")
 	}
 
 	configs, err := config.GetConfig()
 	if err != nil {
-		fmt.Printf("Failed to get config: %v\n", err)
+		t.Fatalf("Failed to get config: %v", err)
 	}
 	cardsServer, err := cards.CreateCardServer(configs)
 	if err != nil {
-		t.Errorf("Failed to create cards server: %v\n", err)
+		t.Fatalf("Failed to create cards server: %v", err)
 	}
+
+	defer cardsServer.Close()
 
 	//用默认的应用（无内置提示词）创建一次对话
 	sessionId, version, err := cardsServer.CreateNewSessionByApp(0)
 	if err != nil {
-		t.Errorf("Failed to create session: %v", err)
+		t.Fatalf("Failed to create session: %v", err)
 	}
 	fmt.Println("start")
 

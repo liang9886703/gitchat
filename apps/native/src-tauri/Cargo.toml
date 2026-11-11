@@ -1,0 +1,26 @@
+[package]
+name = "gitchat-native"
+version = "0.2.0"
+description = "求知 · 卡片式思考空间"
+authors = ["GitChat contributors"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "gitchat_native_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["time"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
