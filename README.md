@@ -26,7 +26,9 @@ go run .
 
 打开 http://127.0.0.1:8002 。未配置模型密钥时使用明确标记的演示模式，可体验完整的卡片操作和持久化。演示回答由本地模板生成。
 
-接入真实模型时设置环境变量。密钥保留在服务端。
+点击顶部模型按钮或侧栏「模型与服务」→「添加模型连接」，选择协议，填写 API 地址、密钥和模型 ID。可以读取模型列表、测试连接、保存多组配置并随时切换。首页演示提示也有直接入口。详情见 [模型接入说明](MODELS.md)。
+
+服务端默认模型仍可通过环境变量配置，供未选择个人连接的空间使用：
 
 ```sh
 export OPENAI_API_KEY='你的密钥'
@@ -35,9 +37,9 @@ export OPENAI_MODEL='你的模型名称'
 go run .
 ```
 
-`OPENAI_BASE_URL` 应以 `/v1` 等 API 根路径结束，服务自动追加 `/chat/completions`。模型需要支持 Chat Completions、JSON 输出模式，以及配置中启用的流式输出。旧的 `OPENAI_API_KEY_0` 命名仍受支持。
+环境变量默认使用 Chat Completions；YAML `chatbot.protocol` 可选择五种协议，服务按协议追加请求路径。`jsonMode: prompt` 用于不支持 JSON 参数的兼容服务，`tokenParameter` 可选择 `max_tokens` 或 `max_completion_tokens`。旧的 `OPENAI_API_KEY_0` 命名仍受支持。
 
-复制 `config.example.yaml` 后可通过 `GITCHAT_CONFIG=/路径/config.yaml go run .` 加载完整配置。`GITCHAT_MODE=demo` 强制使用演示模式，`GITCHAT_MODE=openai` 要求真实模型密钥。`GITCHAT_ADDR` 控制监听地址，`DATA_DIR` 控制数据目录。
+复制 `config.example.yaml` 后可通过 `GITCHAT_CONFIG=/路径/config.yaml go run .` 加载完整配置。`GITCHAT_MODE=demo` 将服务端默认设为演示模式，仍可在界面保存和启用真实模型；`GITCHAT_MODE=openai` 启用服务端默认模型（免鉴权本地服务须明确配置 `noAuth: true`）。`GITCHAT_ADDR` 控制监听地址，`DATA_DIR` 控制数据目录。
 
 ```sh
 docker compose up --build -d
@@ -64,7 +66,9 @@ Compose 将服务映射至本机 8002 端口，并将数据保存在命名卷中
 
 每轮模型返回结构化的标题、简短回答、2–4 个带评分的建议和目标/进展/分支记忆。首层回答上限为 600 字符，深入后的上限可配置。服务校验结构、长度和建议后发送 SSE 文本分段，首段显示前需要等待模型生成及校验。失败采用有限次数重试，可配置备用模型。
 
-`routing` 支持按关键词选择专长模型，按深度、合并操作和上下文体量升级到强模型。长历史及模型切换时会调用模型生成摘要，完整原始卡片保存在本地，供回顾和恢复。路由采用可配置规则，实际成本取决于服务商计价与模型输出。
+界面选择的个人连接固定使用所选模型，不继承服务端的跨模型路由；已开始的回答使用开始时的配置。
+
+服务端默认连接的 `routing` 支持按关键词选择专长模型，按深度、合并操作和上下文体量升级到强模型。长历史及模型切换时会调用模型生成摘要，完整原始卡片保存在本地，供回顾和恢复。路由采用可配置规则，实际成本取决于服务商计价与模型输出。
 
 `privacy.redact` 在发给远端前处理常见邮箱、手机号、身份证号和密钥模式。`privacy.modelCheck` 可额外调用模型检查脱敏后的上下文，检测到剩余敏感内容时返回可见错误。该模型检查本身使用配置的远端服务。本地原始对话按原文保存。
 
@@ -74,7 +78,7 @@ Compose 将服务映射至本机 8002 端口，并将数据保存在命名卷中
 
 ## 数据与可靠性
 
-默认数据文件为 `data/gitchat.json`，包含会话、分享快照、偏好和动作统计。写入使用临时文件、同步和原子重命名，同一数据目录由一个服务进程独占。关闭服务后复制数据目录即可备份，恢复时放回同一目录。分享快照独立于源会话，删除源会话后仍可访问已生成的分享链接。
+默认数据文件为 `data/gitchat.json`，包含会话、分享快照、偏好、动作统计与加密的模型连接。模型密钥由数据目录中的 `model-key.bin` 加密，备份时必须一并保存；持有两份文件的人可以解密，部署环境仍需保护数据目录。写入使用临时文件、同步和原子重命名，同一数据目录由一个服务进程独占。关闭服务后复制数据目录即可备份，恢复时放回同一目录。分享快照独立于源会话，删除源会话后仍可访问已生成的分享链接。
 
 每张卡片有独立模型请求及取消上下文。客户端断连会取消生成，服务重启会将未完成卡片标记为已中断。请求可携带 `request_id` 实现幂等重放，同一 ID 对应不同内容会返回冲突。各浏览器空间间的会话访问经过所有权校验。
 
@@ -87,7 +91,12 @@ Compose 将服务映射至本机 8002 端口，并将数据保存在命名卷中
 | 路径 | 用途 |
 | --- | --- |
 | `GET /health` | 存活检查 |
-| `GET /api/config` | 当前模式与可用应用 |
+| `GET /api/config` | 当前空间的模型、协议、连接名与可用应用 |
+| `GET/POST /api/model-connections` | 列出或新增模型连接，读取时不返回密钥 |
+| `PUT/DELETE /api/model-connections/:id` | 编辑或删除连接，检查 revision 防止覆盖 |
+| `POST /api/model-connections/test` | 用草稿配置发送简短测试，不保存 |
+| `POST /api/model-connections/models` | 读取模型列表，不保存 |
+| `PUT /api/model-selection` | 选择 server、demo 或已保存连接 ID |
 | `GET/POST /api/sessions` | 列出或创建会话 |
 | `GET/DELETE /api/sessions/:id` | 读取或删除会话 |
 | `POST /api/sessions/:id/chat` | 创建卡片并接收 SSE |
@@ -153,7 +162,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-脚本自动构建并启动真实 Go 应用，以临时数据目录和本地可控模型服务运行。桌面、手机手势、异常恢复、设计体验、四端集成与原生网页六个套件逐项操作界面、核对持久化结果并保存截图。结果与可浏览截图报告分别位于 `test-results/results.json` 和 `test-results/report.html`。报告出现任一失败，命令会返回非零退出码。
+脚本自动构建并启动真实 Go 应用，以临时数据目录和本地可控模型服务运行。桌面、手机手势、异常恢复、设计体验、四端集成、原生网页与模型配置七个套件逐项操作界面、核对持久化结果并保存截图。结果与可浏览截图报告分别位于 `test-results/results.json` 和 `test-results/report.html`。报告出现任一失败，命令会返回非零退出码。
 
 可用 `npm run test:e2e -- mobile` 单独复测手机端，`HEADED=1 npm run test:e2e` 显示浏览器。`PLAYWRIGHT_CHROMIUM_EXECUTABLE` 可指定浏览器路径，`GITCHAT_TEST_OUTPUT` 可指定报告目录。完整范围见 [浏览器测试说明](tests/browser/README.md)。
 

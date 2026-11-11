@@ -36,13 +36,13 @@ TLS 反向代理设置 `GITCHAT_SECURE_COOKIES=1`。服务不信任任意 `X-For
 
 ## 验证与分发边界
 
-浏览器套件通过真实 Go 服务、本地可控 OpenAI 协议服务与真实浏览器引擎执行；覆盖桌面操作、触控与缩放、错误恢复、提问阶段、分页与合并、四端尺寸、设备配对和原空间恢复、旧标签保护、PWA 缓存边界、离线草稿与存储异常。生成逐项截图与 HTML 报告。
+浏览器套件通过真实 Go 服务、本地可控多模型协议服务与真实浏览器引擎执行；覆盖桌面操作、触控与缩放、错误恢复、提问阶段、分页与合并、四端尺寸、设备配对和原空间恢复、旧标签保护、PWA 缓存边界、离线草稿与存储异常。生成逐项截图与 HTML 报告。
 
 Go 测试还覆盖 Windows/Unix 文件锁接口、中文空格路径、动态端口、readiness 原子写入、stdin EOF 退出、持久化重启、配对并发消费和凭据隔离。macOS/Windows 后端已交叉编译；Windows 原生运行仍待目标环境验证。
 
 `Four-platform clients` CI 配置了 Mac `.app`、Windows NSIS、Android 调试 APK 与 iOS 未签名模拟器归档。2026-11-11 的四端任务因 GitHub 账户级限制未获 runner 执行；这不是构建通过，需运行条件恢复后重跑。原生应用的构建成功、模拟器运行、真机安装与商店发布是不同阶段。iPhone 真机需要 Apple 开发者签名和描述文件；Android 正式发布需要 release keystore。本仓库不会自动上架、发布正式签名包或生成发布密钥。
 
-当前本机验证：Chromium 92/92、WebKit 30/30；原生连接页与权限检查 4/4、Rust 测试 4/4；Go race 与 vet 通过。Mac arm64 调试 `.app` 已构建，ad-hoc 签名校验通过，实际进程启动检查通过。原生窗口自动化未完成，浏览器中的原生模式检查不能替代真机交互。所有浏览器场景使用本地可控模型协议服务；外部模型服务与真实密钥未参与本轮测试。
+当前本机验证：Chromium 107/107、WebKit 45/45；原生连接页与权限检查 4/4、Rust 测试 4/4；Go race 与 vet 通过。Mac arm64 调试 `.app` 已构建，ad-hoc 签名校验通过，实际进程启动检查通过。原生窗口自动化未完成，浏览器中的原生模式检查不能替代真机交互。所有浏览器场景使用本地可控模型协议服务；外部模型服务与真实密钥未参与本轮测试。
 
 Android arm64 独立 APK 已在本机实际构建，最低 Android 8、目标 Android 17。开发签名、APK ZIP 16 KiB 对齐、包中全部原生库 ELF LOAD 段 16 KiB 对齐均通过。检查曾捕获默认链接器产生的 4 KiB 原生库，修复后重建通过；此检查已纳入 CI。APK 使用调试签名，真机键盘、系统分享、设备返回和网络切换仍待设备验证。
 
@@ -51,3 +51,5 @@ Windows x64 独立 NSIS 安装包已通过 macOS 上的 `cargo-xwin` 实际交�
 iPhone 的设备 IPA 由手动工作流 `Signed iPhone package` 提供，需匹配的团队与签名配置。本机仅有 Command Line Tools，没有完整 Xcode；本轮尚未产出可安装 iPhone 包。未签名模拟器归档同样不能当作 iPhone 安装包。
 
 官方依据：[Tauri 平台依赖](https://v2.tauri.app/start/prerequisites/)、[Tauri 权限](https://v2.tauri.app/security/capabilities/)、[Web App Manifest](https://web.dev/learn/pwa/web-app-manifest)、[Apple Mac Web App](https://support.apple.com/en-gb/104996)、[Microsoft PWA](https://learn.microsoft.com/microsoft-edge/progressive-web-apps-chromium/how-to/)。
+
+模型设置在顶部、侧栏及演示首页均有入口，四端共用。支持五种原生/兼容协议、连接测试、模型列表、多配置保存切换与加密凭据；详见 [模型接入](MODELS.md)。本轮 Mac/Windows 安装包已更新内置 Go 服务，Android 客户端连接新版服务后获取同一设置界面。

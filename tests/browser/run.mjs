@@ -8,7 +8,7 @@ await mkdir(outputDir, { recursive: true });
 const args = process.argv.slice(2);
 const isWebKit = args.includes('--webkit');
 const selected = args.filter(arg => arg !== '--webkit');
-const suites = selected.length ? selected : ['desktop', 'mobile', 'recovery', 'experience', 'platform', 'native_web'];
+const suites = selected.length ? selected : ['desktop', 'mobile', 'recovery', 'experience', 'platform', 'native_web', 'models'];
 let service, browser;
 const results = [];
 try {
@@ -18,7 +18,7 @@ try {
     console.log(`Running ${name} at ${service.baseURL}`);
     try {
       const { run } = await import(`./${name}.mjs`);
-      results.push(...await run({ browser, baseURL: service.baseURL, outputDir }));
+      results.push(...await run({ browser, baseURL: service.baseURL, modelURL: service.modelURL, outputDir }));
     } catch (error) {
       results.push({ name, status: 'failed', error: error.stack });
     }

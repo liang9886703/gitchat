@@ -13,8 +13,13 @@ export async function startService() {
   const model = http.createServer(async (request, response) => {
     let text = '';
     for await (const chunk of request) text += chunk;
+    const send = value => response.end(JSON.stringify(value));
+    if ([request.headers.authorization, request.headers['x-api-key'], request.headers['x-goog-api-key']].some(key => key?.includes('bad-key'))) { response.writeHead(401, {'Content-Type':'application/json'}); send({error:'Never echo test-secret'});return; }
+    if (request.method === 'GET') { response.writeHead(200, {'Content-Type':'application/json'});send({data:[{id:'test-model'},{id:'alternate-model'}],models:[{name:'models/test-model',supportedGenerationMethods:['generateContent']} ]});return; }
     const input = JSON.parse(text);
-    const question = input.messages.at(-1)?.content || '';
+    const protocol = request.url.includes('/responses')?'openai-responses':request.url.includes('/messages')?'anthropic':request.url.includes('GenerateContent')||request.url.includes('generateContent')?'gemini':request.url.includes('/api/chat')?'ollama':'openai-chat';
+    const messages = input.messages || input.input || input.contents?.map(m=>({content:m.parts.map(p=>p.text).join('')})) || [];
+    const question = messages.at(-1)?.content || '';
     const count = (attempts.get(question) || 0) + 1;
     attempts.set(question, count);
     if (question.includes('[slow]')) await delay(3000);
@@ -33,10 +38,19 @@ export async function startService() {
       suggestions: [{ title: '继续深入', question: `进一步分析 ${question.slice(0, 20)}`, score: 0.95 }, { title: '比较另一个方向', question: `比较 ${question.slice(0, 20)} 的替代方案`, score: 0.8 }, { title: '确认约束', question: '有哪些关键约束？', score: 0.7 }],
       memory: { goal: question, progress: ['明确当前问题'], branch_ideas: ['比较可选方向'], preferences: [] } };
     const content = question.includes('[invalid]') ? 'this is not JSON' : JSON.stringify(result);
-    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-    for (let index = 0; index < content.length; index += 37) {
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: content.slice(index, index + 37) } }] })}\n\n`);
+    const responseEnvelope = {status:'completed',output:[{type:'message',content:[{type:'output_text',text:content}]}]};
+    const geminiEnvelope = {candidates:[{content:{parts:[{text:content}]},finishReason:'STOP'}]};
+    if (input.stream === false || protocol === 'gemini' && !request.url.includes('streamGenerateContent')) {
+      response.writeHead(200, {'Content-Type':'application/json'});
+      send(protocol==='openai-responses'?responseEnvelope:protocol==='anthropic'?{content:[{type:'text',text:content}],stop_reason:'end_turn'}:protocol==='gemini'?geminiEnvelope:protocol==='ollama'?{message:{content},done:true}:{choices:[{message:{content},finish_reason:'stop'}]});return;
     }
+    response.writeHead(200, { 'Content-Type': protocol==='ollama'?'application/x-ndjson':'text/event-stream' });
+    const event=value=>response.write(`data: ${JSON.stringify(value)}\n\n`);
+    if(protocol==='ollama'){response.end(JSON.stringify({message:{content},done:true})+'\n');return;}
+    if(protocol==='gemini'){event(geminiEnvelope);response.end();return;}
+    if(protocol==='openai-responses'){event({type:'response.output_text.delta',delta:content});event({type:'response.completed',response:responseEnvelope});response.end();return;}
+    if(protocol==='anthropic'){event({type:'content_block_delta',delta:{type:'text_delta',text:content}});event({type:'message_delta',delta:{stop_reason:'end_turn'}});event({type:'message_stop'});response.end();return;}
+    for (let index = 0; index < content.length; index += 37) event({choices:[{delta:{content:content.slice(index,index+37)}}]});
     response.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
   });
   const modelPort = await listen(model);
@@ -61,7 +75,7 @@ export async function startService() {
     await delay(100);
   }
   if (!ready) throw new Error(`Application did not become ready\n${logs}`);
-  return { baseURL, async close() {
+  return { baseURL, modelURL: `http://127.0.0.1:${modelPort}`, async close() {
     child.kill('SIGTERM');
     await Promise.race([new Promise(resolve => child.once('exit', resolve)), delay(5000)]);
     if (child.exitCode === null) child.kill('SIGKILL');

@@ -14,8 +14,10 @@
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/platform.css">
+  <link rel="stylesheet" href="/models.css">
   <script src="/app.js" defer></script>
   <script src="/platform.js" defer></script>
+  <script src="/models.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -29,7 +31,7 @@
       </nav>
       <div class="sidebar-label">最近对话</div>
       <div id="sessions" class="session-list"></div>
-      <div class="sidebar-bottom"><button data-action="import"><span>↙</span> 导入分享</button><button data-action="settings"><span>⚙</span> 我的偏好</button><button data-platform="devices"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="13" height="12" rx="2"/><path d="M7 20h6m-3-4v4"/><rect x="16" y="9" width="5" height="11" rx="1"/></svg> 设备与空间</button><button data-platform="install"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg> 安装求知</button><button data-platform="native-settings" hidden>连接设置</button><button data-platform="recover-note" hidden>继续未发送的灵感</button><div id="mode" class="mode-label">正在连接…</div></div>
+      <div class="sidebar-bottom"><button data-model="open"><span>◈</span> 模型与服务</button><button data-action="import"><span>↙</span> 导入分享</button><button data-action="settings"><span>⚙</span> 我的偏好</button><button data-platform="devices"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="13" height="12" rx="2"/><path d="M7 20h6m-3-4v4"/><rect x="16" y="9" width="5" height="11" rx="1"/></svg> 设备与空间</button><button data-platform="install"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg> 安装求知</button><button data-platform="native-settings" hidden>连接设置</button><button data-platform="recover-note" hidden>继续未发送的灵感</button><div id="mode" class="mode-label">正在连接…</div></div>
     </aside>
     <button id="sidebar-scrim" class="scrim" aria-label="关闭导航" data-action="sidebar"></button>
     <div class="workspace">
@@ -37,7 +39,7 @@
       <header class="topbar">
         <button class="icon-button mobile-menu" data-action="sidebar" aria-label="打开导航">☰</button>
         <div class="page-heading"><span id="page-title">新的探索</span><small id="page-subtitle">一个问题，一个新的方向</small></div>
-        <div class="view-switch" aria-label="切换视图"><button data-action="view" data-value="focus" class="active">专注</button><button data-action="view" data-value="overview">思维图</button></div>
+        <button class="model-chip" id="model-chip" data-model="open" title="模型与服务" aria-label="模型与服务">配置模型</button><div class="view-switch" aria-label="切换视图"><button data-action="view" data-value="focus" class="active">专注</button><button data-action="view" data-value="overview">思维图</button></div>
         <button class="icon-button" data-action="session-menu" aria-label="对话操作" title="对话操作">···</button>
       </header>
       <main id="main" tabindex="-1"></main>

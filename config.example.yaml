@@ -1,4 +1,5 @@
-# Copy to config.yaml or set GITCHAT_CONFIG. API keys are read only from environment.
+# Server default settings. Personal model connections can also be configured in the UI.
+# API keys for this YAML configuration are read from environment.
 # mode can be demo or openai. If omitted, an API key enables openai mode.
 # Set OPENAI_API_KEY (or legacy OPENAI_API_KEY_0) for real generation.
 dataDir: ./data
@@ -8,6 +9,11 @@ namespace:
   - name: default
     chatbotId: "0"
     chatbot:
+      # openai-chat | openai-responses | anthropic | gemini | ollama
+      protocol: openai-chat
+      jsonMode: native # native | prompt (compatibility mode)
+      tokenParameter: max_tokens # or max_completion_tokens for Chat Completions
+      noAuth: false # explicit opt-in for a trusted endpoint without API authentication
       baseURL: https://api.openai.com/v1
       model: gpt-4o-mini
       maxTokens: 2400
@@ -21,7 +27,7 @@ routing:
   contextChars: 12000
   maxAnswerChars: 1200
   retries: 1
-  # Model names must be available from the configured OpenAI-compatible endpoint.
+  # Model names must be available from the configured endpoint and protocol.
   strongModel: ""
   fallbackModel: ""
   topics: []

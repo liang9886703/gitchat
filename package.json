@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "test:e2e": "node tests/browser/run.mjs",
-    "test:webkit": "node tests/browser/run.mjs --webkit platform experience native_web",
+    "test:webkit": "node tests/browser/run.mjs --webkit models platform experience native_web",
     "icons": "node scripts/generate-icons.mjs",
     "native:dev": "npm --prefix apps/native run dev",
     "native:build": "npm --prefix apps/native run build"

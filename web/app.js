@@ -148,7 +148,8 @@ function composerHTML() {
 function renderSidebar() {
   $('#sessions').innerHTML = state.sessions.map(session => `<button class="session-item ${session.id === state.session?.id && !state.shared ? 'active' : ''}" data-action="session" data-id="${id(session.id)}" title="${escapeHTML(session.title)}">${escapeHTML(session.title || '新的探索')}</button>`).join('') || '<div class="session-item">还没有对话</div>';
   document.querySelectorAll('.collections button').forEach(button => button.classList.toggle('active', button.dataset.value === state.collection));
-  $('#mode').textContent = state.config.mode === 'demo' ? '演示模式 · 本地示例回答' : '模型已连接 · 私人工作区';
+  $('#mode').textContent = state.config.mode === 'demo' ? '演示模式 · 本地示例回答' : `${state.config.connection_name || '模型已配置'} · ${state.config.model || '私人工作区'}`;
+  if ($('#model-chip')) $('#model-chip').textContent = state.config.mode === 'demo' ? '演示 · 配置模型' : state.config.model || '模型设置';
   $('#footer-mode').textContent = state.config.mode === 'demo' ? '演示回答用于体验交互' : 'AI 生成内容，请核实重要信息';
 }
 function render() {
@@ -234,7 +235,7 @@ function centerInLane(lane, node) {
   lane.scrollLeft += bounds.left + bounds.width / 2 - viewport.left - lane.clientWidth / 2;
 }
 function welcomeHTML() {
-  return `<section class="welcome"><div class="welcome-mark">✳</div><h1>从一个问题开始</h1><p>把大的问题拆小，把不同的思路展开。<br>每一张卡片，都是你探索的一步。</p>${composerHTML()}<div class="starter-grid"><button class="starter" data-action="starter" data-value="我想安排一次日本旅行，如何先确定方向？"><span>↗</span><strong>规划一段旅程</strong><small>从想去的地方<br>到自己的旅行路线</small></button><button class="starter" data-action="starter" data-value="我想了解大模型的长期记忆，应该从哪里开始？"><span>✧</span><strong>理解一个新概念</strong><small>先建立全貌<br>再逐层深入</small></button><button class="starter" data-action="starter" data-value="我需要为一个新项目选择技术方案，该怎样比较不同架构？"><span>⌘</span><strong>比较不同的方案</strong><small>分别探索可能性<br>再汇合成一个决定</small></button></div><div class="intro-hint">上滑深入 · 左滑发散 · 双指缩放查看思维图</div></section>`;
+  return `<section class="welcome"><div class="welcome-mark">✳</div><h1>从一个问题开始</h1><p>把大的问题拆小，把不同的思路展开。<br>每一张卡片，都是你探索的一步。</p>${state.config.mode === 'demo' ? '<div class="model-welcome"><span>当前是演示回答。接入模型，让思考真正开始。</span><button class="secondary" data-model="open">连接模型 ↗</button></div>' : ''}${composerHTML()}<div class="starter-grid"><button class="starter" data-action="starter" data-value="我想安排一次日本旅行，如何先确定方向？"><span>↗</span><strong>规划一段旅程</strong><small>从想去的地方<br>到自己的旅行路线</small></button><button class="starter" data-action="starter" data-value="我想了解大模型的长期记忆，应该从哪里开始？"><span>✧</span><strong>理解一个新概念</strong><small>先建立全貌<br>再逐层深入</small></button><button class="starter" data-action="starter" data-value="我需要为一个新项目选择技术方案，该怎样比较不同架构？"><span>⌘</span><strong>比较不同的方案</strong><small>分别探索可能性<br>再汇合成一个决定</small></button></div><div class="intro-hint">上滑深入 · 左滑发散 · 双指缩放查看思维图</div></section>`;
 }
 function focusHTML() {
   let card = current();

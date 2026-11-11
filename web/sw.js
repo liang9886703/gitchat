@@ -1,8 +1,8 @@
 'use strict';
 
 // Public assets only. Never store API responses, cookies, conversations or share URLs.
-const CACHE = 'gitchat-shell-v3';
-const ASSETS = ['/offline.html', '/style.css', '/platform.css', '/app.js', '/platform.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-512.png', '/icons/apple-touch-icon.png'];
+const CACHE = 'gitchat-shell-v4';
+const ASSETS = ['/offline.html', '/style.css', '/platform.css', '/models.css', '/models.js', '/app.js', '/platform.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png', '/icons/icon-512.png', '/icons/maskable-512.png', '/icons/apple-touch-icon.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)));
 });
