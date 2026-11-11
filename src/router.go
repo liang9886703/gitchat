@@ -1,7 +1,6 @@
 package router
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -59,18 +58,18 @@ func SetupRouter(server *cards.CardServer, configurations ...*config.Config) *gi
 		owner, err := c.Cookie("gitchat_owner")
 		decoded, decodeErr := hex.DecodeString(owner)
 		if err != nil || decodeErr != nil || len(decoded) != 32 {
-			random := make([]byte, 32)
-			if _, err := rand.Read(random); err != nil {
+			owner, err = newOwner()
+			if err != nil {
 				c.AbortWithStatus(500)
 				return
 			}
-			owner = hex.EncodeToString(random)
-			http.SetCookie(c.Writer, &http.Cookie{Name: "gitchat_owner", Value: owner, Path: "/", HttpOnly: true, Secure: c.Request.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: 365 * 24 * 60 * 60})
+			setOwnerCookie(c, owner)
 		}
 		c.Set("owner", owner)
 		c.Next()
 	})
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
+	registerDevices(r)
 	r.GET("/api/config", func(c *gin.Context) {
 		c.JSON(200, gin.H{"mode": mode, "model_configured": mode != "demo", "apps": server.Apps()})
 	})
@@ -198,7 +197,15 @@ func SetupRouter(server *cards.CardServer, configurations ...*config.Config) *gi
 			return
 		}
 		switch c.Request.URL.Path {
-		case "/", "/index.html", "/app.js", "/style.css", "/styles.css":
+		case "/sw.js":
+			c.Header("Cache-Control", "no-cache")
+			c.Header("Service-Worker-Allowed", "/")
+			files.ServeHTTP(c.Writer, c.Request)
+		case "/manifest.webmanifest":
+			c.Header("Content-Type", "application/manifest+json")
+			files.ServeHTTP(c.Writer, c.Request)
+		case "/", "/index.html", "/app.js", "/style.css", "/styles.css", "/platform.js", "/platform.css", "/offline.html",
+			"/icons/icon.svg", "/icons/icon-192.png", "/icons/icon-512.png", "/icons/maskable-512.png", "/icons/apple-touch-icon.png":
 			files.ServeHTTP(c.Writer, c.Request)
 		default:
 			c.Status(404)

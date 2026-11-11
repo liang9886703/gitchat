@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -89,14 +88,14 @@ func CreateCardServerWithProvider(cfg *config.Config, p modelServer.Provider) (C
 		if err != nil {
 			return CardServer{}, err
 		}
-		if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if err = lockDataFile(lock); err != nil {
 			lock.Close()
 			return CardServer{}, fmt.Errorf("data directory is in use: %w", err)
 		}
 		s.lockFile = lock
 		s.file = filepath.Join(cfg.DataDir, "gitchat.json")
 		if err = s.load(); err != nil {
-			syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+			_ = unlockDataFile(lock)
 			lock.Close()
 			return CardServer{}, err
 		}
@@ -353,7 +352,7 @@ func (cs *CardServer) Close() error {
 	defer s.mu.Unlock()
 	err := s.save()
 	if s.lockFile != nil {
-		_ = syscall.Flock(int(s.lockFile.Fd()), syscall.LOCK_UN)
+		_ = unlockDataFile(s.lockFile)
 		closeErr := s.lockFile.Close()
 		s.lockFile = nil
 		if err == nil {
