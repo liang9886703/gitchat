@@ -26,6 +26,7 @@ const (
 var (
 	errPairingInvalid = errors.New("配对码无效或已过期，请在原设备重新生成")
 	errPairingLimited = errors.New("配对请求过于频繁，请稍后再试")
+	errRestoreFirst   = errors.New("本设备保留着原空间，请先恢复原空间，再切换或断开")
 )
 
 type pairingEntry struct {
@@ -138,10 +139,34 @@ func newOwner() (string, error) {
 }
 
 func setOwnerCookie(c *gin.Context, owner string) {
+	setCredentialCookie(c, "gitchat_owner", owner, "/", 365*24*60*60)
+}
+
+func setCredentialCookie(c *gin.Context, name, value, path string, maxAge int) {
 	// A TLS-terminating deployment may explicitly force Secure cookies. Never
 	// infer this from untrusted client-supplied forwarded headers.
 	secure := c.Request.TLS != nil || os.Getenv("GITCHAT_SECURE_COOKIES") == "1"
-	http.SetCookie(c.Writer, &http.Cookie{Name: "gitchat_owner", Value: owner, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: 365 * 24 * 60 * 60})
+	http.SetCookie(c.Writer, &http.Cookie{Name: name, Value: value, Path: path, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
+}
+
+func previousOwner(c *gin.Context) string {
+	owner, err := c.Cookie("gitchat_previous_owner")
+	decoded, decodeErr := hex.DecodeString(owner)
+	if err != nil || decodeErr != nil || len(decoded) != 32 {
+		return ""
+	}
+	return owner
+}
+
+func backUpOwner(c *gin.Context) {
+	setCredentialCookie(c, "gitchat_previous_owner", c.GetString("owner"), "/api/devices", 365*24*60*60)
+}
+
+// This public fingerprint detects a page acting on a cookie that has changed in
+// another tab. It is not an authentication credential and cannot recover owner.
+func workspaceFingerprint(owner string) string {
+	fingerprint := sha256.Sum256([]byte(owner))
+	return hex.EncodeToString(fingerprint[:])
 }
 
 func pairingIP(r *http.Request) string {
@@ -161,6 +186,8 @@ func pairingError(c *gin.Context, err error) {
 		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
 	case errors.Is(err, errPairingInvalid):
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, errRestoreFirst):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "暂时无法创建设备配对"})
 	}
@@ -168,6 +195,9 @@ func pairingError(c *gin.Context, err error) {
 
 func registerDevices(r *gin.Engine) {
 	store := newPairingStore()
+	r.GET("/api/devices", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"can_restore": previousOwner(c) != ""})
+	})
 	r.POST("/api/devices/pairing", func(c *gin.Context) {
 		code, expires, err := store.issue(c.GetString("owner"), pairingIP(c.Request))
 		if err != nil {
@@ -183,21 +213,45 @@ func registerDevices(r *gin.Engine) {
 		if !bind(c, &input) {
 			return
 		}
+		// Do not consume a capability until the original workspace can safely be
+		// retained. Repeated switches must never evict its sole browser credential.
+		if previousOwner(c) != "" {
+			pairingError(c, errRestoreFirst)
+			return
+		}
 		owner, err := store.consume(input.Code, pairingIP(c.Request))
 		if err != nil {
 			pairingError(c, err)
 			return
 		}
-		setOwnerCookie(c, owner)
+		if owner != c.GetString("owner") {
+			backUpOwner(c)
+			setOwnerCookie(c, owner)
+		}
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 	r.POST("/api/devices/disconnect", func(c *gin.Context) {
+		if previousOwner(c) != "" {
+			pairingError(c, errRestoreFirst)
+			return
+		}
 		owner, err := newOwner()
 		if err != nil {
 			pairingError(c, err)
 			return
 		}
+		backUpOwner(c)
 		setOwnerCookie(c, owner)
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+	r.POST("/api/devices/restore", func(c *gin.Context) {
+		owner := previousOwner(c)
+		if owner == "" {
+			c.JSON(http.StatusConflict, gin.H{"error": "本设备没有可恢复的原空间"})
+			return
+		}
+		setOwnerCookie(c, owner)
+		setCredentialCookie(c, "gitchat_previous_owner", "", "/api/devices", -1)
 		c.JSON(http.StatusOK, gin.H{"ok": true})
 	})
 }

@@ -66,12 +66,18 @@ func SetupRouter(server *cards.CardServer, configurations ...*config.Config) *gi
 			setOwnerCookie(c, owner)
 		}
 		c.Set("owner", owner)
+		if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead && c.Request.Method != http.MethodOptions {
+			if expected := c.GetHeader("X-GitChat-Workspace"); expected != "" && expected != workspaceFingerprint(owner) {
+				c.AbortWithStatusJSON(http.StatusConflict, gin.H{"error": "空间已切换，请刷新页面后继续"})
+				return
+			}
+		}
 		c.Next()
 	})
 	r.GET("/health", func(c *gin.Context) { c.JSON(200, gin.H{"status": "ok"}) })
 	registerDevices(r)
 	r.GET("/api/config", func(c *gin.Context) {
-		c.JSON(200, gin.H{"mode": mode, "model_configured": mode != "demo", "apps": server.Apps()})
+		c.JSON(200, gin.H{"mode": mode, "model_configured": mode != "demo", "apps": server.Apps(), "workspace_id": workspaceFingerprint(c.GetString("owner"))})
 	})
 	r.GET("/api/sessions", func(c *gin.Context) { c.JSON(200, server.ListSessions(c.GetString("owner"))) })
 	r.POST("/api/sessions", func(c *gin.Context) {

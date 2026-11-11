@@ -40,7 +40,7 @@ async function quoteAnswer(page) {
   assert.ok((await page.locator('.quote').innerText()).length > 5, 'selected text is visible in composer');
 }
 async function stop(page) {
-  await page.waitForSelector('#answer-card');
+  await page.waitForSelector('#answer-card:not([data-card-id="pending"])');
   await page.locator('[data-action="stop"]').click();
   await settled(page, '已停止');
 }
@@ -203,7 +203,7 @@ export async function run({ browser, baseURL, outputDir }) {
 
   await scenario('reload-during-generation-recovers', async (page, context, capture) => {
     await submit(page, `[slow] 刷新期间的生成 ${unique()}`);
-    await page.waitForSelector('#answer-card');
+    await page.waitForSelector('#answer-card:not([data-card-id="pending"])');
     await page.reload({ waitUntil: 'domcontentloaded' });
     await settled(page, '已停止');
     const interrupted = await lastCard(page, baseURL);
@@ -211,6 +211,23 @@ export async function run({ browser, baseURL, outputDir }) {
     await capture('reloaded-interruption');
     await page.locator('[data-action="retry"]').click();
     await settled(page);
+  });
+
+  await scenario('reload-before-session-created-keeps-question', async page => {
+    let release;
+    const gate = new Promise(resolve => {release=resolve;});
+    await page.route('**/api/sessions', async route => {
+      if(route.request().method()==='POST') { await gate; await route.abort().catch(()=>{}); }
+      else await route.continue();
+    });
+    const question=`发送建立前保留的问题 ${unique()}`;
+    await submit(page,question);
+    await page.locator('#answer-card[data-card-id="pending"]').waitFor();
+    await page.reload({waitUntil:'domcontentloaded'});
+    release();
+    await page.locator('#question').waitFor();
+    assert.equal(await page.locator('#question').inputValue(),question);
+    assert.equal(await page.locator('#answer-card').count(),0);
   });
 
   await scenario('session-creation-failure-retains-draft', async page => {

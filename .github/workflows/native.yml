@@ -47,6 +47,8 @@ jobs:
         with:
           workspaces: apps/native/src-tauri
       - run: npm ci
+      - run: npx playwright install chromium
+      - run: npm test
       - name: Test native Go persistence and locking
         working-directory: .
         run: go test -race -timeout 90s ./...

@@ -1,0 +1,49 @@
+[hidden]{display:none!important}
+.platform-icon{width:20px;height:20px;flex-shrink:0;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.platform-status{display:flex;align-items:center;justify-content:center;gap:16px;padding:12px 20px;background:#eee9fc;color:#51437c;font-size:13px;line-height:1.6}
+.platform-status button{flex-shrink:0;min-height:44px;padding:8px 16px;border:1px solid #b9addb;border-radius:9px;color:#51437c;background:#fff}
+.platform-tabs{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:22px 0 16px}
+.platform-tabs button{min-height:44px;border:1px solid #ddd7ec;border-radius:8px;color:#655c78;background:#fff;font-size:13px}
+.platform-tabs button[aria-pressed=true]{color:#5543b5;border-color:#8070c5;background:#f1edff}
+.platform-guide,.device-section{padding:16px 0;border-top:1px solid #e5e0ee}
+.platform-guide h3,.device-section h3{font-size:15px;font-weight:600;color:#3f394f;margin:0 0 10px}
+.platform-guide p,.device-section p,dialog .platform-notice{color:#625a71;font-size:13px;line-height:1.8}
+.platform-notice{padding:12px 14px;background:#f3f0fa;border-radius:9px}
+.device-origin{display:grid;gap:8px;background:#f6f3fb;border-radius:9px;padding:14px;font-size:12px;color:#6c617e}
+.device-origin strong{font-size:14px;font-weight:500;overflow-wrap:anywhere;color:#463958}
+dialog .platform-checkbox{display:flex;align-items:flex-start;gap:12px;font-size:13px;line-height:1.7;color:#625a71;min-height:44px}
+dialog .platform-checkbox input{width:20px;height:20px;flex-shrink:0;margin:2px 0;accent-color:#6556d9}
+#device-pair-code{font-family:ui-monospace,monospace;font-size:13px}
+#pair-result{margin-top:14px}
+#saved-inspiration{min-height:140px}
+.sidebar{padding-top:max(28px,env(safe-area-inset-top));padding-bottom:max(20px,env(safe-area-inset-bottom))}
+.topbar{padding-top:env(safe-area-inset-top);height:calc(90px + env(safe-area-inset-top))}
+.workspace-footer{padding-bottom:env(safe-area-inset-bottom);height:calc(43px + env(safe-area-inset-bottom))}
+.merge-bar{bottom:max(14px,env(safe-area-inset-bottom))}
+dialog{max-height:calc(var(--viewport-height,100dvh) - 32px - env(safe-area-inset-top) - env(safe-area-inset-bottom));overflow-y:auto;overscroll-behavior:contain}
+.toast{bottom:calc(24px + env(safe-area-inset-bottom))}
+.offline-page{margin:0;min-height:100dvh;display:grid;place-items:center;padding:calc(32px + env(safe-area-inset-top)) max(24px,env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));background:#f7f7fb;color:#302a40;font:16px -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;box-sizing:border-box}
+.offline-card{width:100%;max-width:540px}
+.offline-card h1{font-size:30px;font-weight:550;line-height:1.5;margin:10px 0 16px}
+.offline-card p{font-size:15px;line-height:1.8;color:#6e657c}
+.offline-card .offline-eyebrow{font-size:12px;letter-spacing:2px;color:#7561b8;margin-top:28px}
+.offline-card form{margin-top:30px}
+.offline-card label{display:block;font-size:14px;margin-bottom:12px;color:#514460}
+.offline-card textarea{box-sizing:border-box;resize:vertical;min-height:150px;width:100%;padding:18px;border:1px solid #c9bfdb;border-radius:14px;color:#40334f;background:#fff;font-family:inherit;font-size:16px;line-height:1.8}
+.offline-card textarea:focus{outline:3px solid #c5b9f0;outline-offset:2px}
+.offline-card #offline-save-status{font-size:12px}
+.offline-actions{display:flex;gap:12px;justify-content:flex-end;margin-top:24px}
+.offline-actions button{font-family:inherit;font-size:14px;padding:12px 20px;min-height:48px;border-radius:9px;cursor:pointer;border:1px solid #c6bbdf;background:white;color:#64527f}
+.offline-actions .send-button{background:#6556d9;color:white;border-color:#6556d9}
+@media(max-width:760px){
+ .topbar{height:calc(73px + env(safe-area-inset-top));padding-left:max(12px,env(safe-area-inset-left));padding-right:max(12px,env(safe-area-inset-right))}
+ #main{padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right))}
+ .sidebar{height:var(--viewport-height,100dvh)}
+ .platform-status{align-items:flex-start;padding:10px 16px;gap:8px;font-size:12px}
+ .platform-status button{padding:8px;font-size:12px}
+ dialog input,dialog textarea,dialog select{font-size:16px}
+ dialog{padding:22px;width:calc(100vw - 24px)}
+ .keyboard-open .thought-card{min-height:0}
+ .keyboard-open .workspace-footer{display:none}
+}
+@media(prefers-reduced-motion:reduce){.platform-status *{scroll-behavior:auto!important}}

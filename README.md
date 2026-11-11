@@ -1,6 +1,19 @@
 # 求知 · GitChat
 
-把问题和回答组织成可深入、发散、回溯与合并的卡片。Go 服务内嵌中文响应式网页，浏览器可直接使用。
+把问题和回答组织成可深入、发散、回溯与合并的卡片，让用户按自己的节奏思考。Go 服务内嵌中文界面，Android、iPhone/iPad、macOS 和 Windows 共用同一套体验；提供可安装网页与 Tauri 原生客户端。
+
+## 四端使用
+
+| 设备 | 安装网页 | 原生客户端 |
+| --- | --- | --- |
+| Android | Chrome 安装到主屏幕 | Android 工程与 APK 构建流程，连接 HTTPS 服务 |
+| iPhone / iPad | Safari 分享 → 添加到主屏幕 | iOS 工程与模拟器构建流程；真机安装需 Apple 签名 |
+| macOS | Safari 添加到程序坞，或 Chrome 安装 | `.app`，可运行随包附带的本地 Go 服务，也可连接远程服务 |
+| Windows | Edge / Chrome 安装应用 | NSIS 安装包构建流程，本地 Go 服务或远程服务 |
+
+网页侧导航中的「安装求知」提供设备对应的步骤。「设备与空间」可通过一次性配对码连接另一台设备的同一空间，并保留返回本机原空间的入口。四端需连接同一个 HTTPS 服务；电脑上的回环地址不能直接作为手机的服务器地址。
+
+原生工程、依赖与打包命令见 [原生客户端说明](apps/native/README.md)，设计落实和平台验证边界见 [四端与体验说明](PLATFORMS.md)。
 
 ## 启动
 
@@ -30,7 +43,7 @@ go run .
 docker compose up --build -d
 ```
 
-Compose 将服务映射至本机 8002 端口，并将数据保存在命名卷中。运行在局域网或公网时，配置 HTTPS 反向代理和适合部署环境的访问控制。当前用户空间由浏览器 HttpOnly 随机凭据区分，清除该 Cookie 会失去原空间的访问凭据。
+Compose 将服务映射至本机 8002 端口，并将数据保存在命名卷中。运行在局域网或公网时，配置 HTTPS 反向代理和适合部署环境的访问控制。TLS 在代理终止时设置 `GITCHAT_SECURE_COOKIES=1`。当前用户空间由 HttpOnly 随机凭据区分，清除全部 Cookie 会失去本设备的访问凭据；可从仍连接该空间的设备重新配对。
 
 ## 使用
 
@@ -42,6 +55,10 @@ Compose 将服务映射至本机 8002 端口，并将数据保存在命名卷中
 - 收藏、标记想清楚、归档与恢复均会保存。卡片菜单支持复制回答、从节点复制新对话和分享快照。
 - 分享链接包含所选节点及其上游图结构。接收方可独立复制后继续提问。链接需要在能访问同一服务的环境中使用。
 - 偏好设置支持语气、兴趣与常见任务。模型从用户明确表达中提取的稳定偏好也会保存，并用于后续生成。
+- 思维图默认聚焦当前分支，每层可单独切换相邻卡片；需要时可展开全部。隐藏在当前行外的合并选择仍会保留，最多选择 16 张卡片。
+- 提问阶段的建议先填入输入框，允许修改后发送；发散卡片准确显示同层父背景，合并卡片显示各个来源。
+- 手机回车换行，使用发送按钮提交；电脑 Enter 发送、Shift + Enter 换行，Cmd/Ctrl + Enter 也可发送。Escape 返回回答，非输入状态下 Alt + 方向键可切换思路。
+- 安装网页后，断网重开可先把灵感留在本机，联网后再放进提问卡片编辑。灵感不会自动发给模型；历史对话仍由服务器保存，离线外壳不缓存私人 API。
 
 ## 模型与上下文
 
@@ -84,6 +101,11 @@ Compose 将服务映射至本机 8002 端口，并将数据保存在命名卷中
 | `GET /api/sessions/:id/export` | 导出 JSON |
 | `GET/PUT /api/preferences` | 读取或保存偏好 |
 | `GET /api/stats` | 查看动作统计 |
+| `GET /api/devices` | 查看能否返回本机原空间 |
+| `POST /api/devices/pairing` | 生成 10 分钟有效的一次性配对码 |
+| `POST /api/devices/pair` | 使用 `{ "code": "…" }` 连接另一空间 |
+| `POST /api/devices/restore` | 返回本机原空间 |
+| `POST /api/devices/disconnect` | 转入新的空白空间，保留原空间恢复凭据 |
 
 创建会话接受 `{ "app_id": "default", "title": "旅行规划" }`。`chat` 请求示例为
 
@@ -131,6 +153,8 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-脚本自动构建并启动真实 Go 应用，以临时数据目录和本地可控模型服务运行。桌面、手机手势和异常恢复三个套件逐项操作界面、核对持久化结果并保存截图。结果与可浏览截图报告分别位于 `test-results/results.json` 和 `test-results/report.html`。报告出现任一失败，命令会返回非零退出码。
+脚本自动构建并启动真实 Go 应用，以临时数据目录和本地可控模型服务运行。桌面、手机手势、异常恢复、设计体验、四端集成与原生网页六个套件逐项操作界面、核对持久化结果并保存截图。结果与可浏览截图报告分别位于 `test-results/results.json` 和 `test-results/report.html`。报告出现任一失败，命令会返回非零退出码。
 
 可用 `npm run test:e2e -- mobile` 单独复测手机端，`HEADED=1 npm run test:e2e` 显示浏览器。`PLAYWRIGHT_CHROMIUM_EXECUTABLE` 可指定浏览器路径，`GITCHAT_TEST_OUTPUT` 可指定报告目录。完整范围见 [浏览器测试说明](tests/browser/README.md)。
+
+苹果浏览器引擎可独立回归：`npx playwright install webkit` 后运行 `npm run test:webkit`。WebKit 与手机尺寸仿真可以检验兼容性，但不能替代真实 iPhone/Android 键盘、系统分享与签名安装验证。

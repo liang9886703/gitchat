@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { readFile, mkdir } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 test('connection screen: desktop, mobile, loading, failure, reconnect and keyboard', async t => {
@@ -14,7 +15,8 @@ test('connection screen: desktop, mobile, loading, failure, reconnect and keyboa
     res.end(await readFile(new URL(`../src/${filename}`, import.meta.url)));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : undefined);
+  const systemChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || (process.platform === 'darwin' && existsSync(systemChrome) ? systemChrome : undefined);
   const browser = await chromium.launch({ executablePath, headless: true });
   t.after(async () => { await browser.close(); await new Promise(resolve => server.close(resolve)); });
   const output = new URL('../test-results/', import.meta.url);

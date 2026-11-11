@@ -27,3 +27,11 @@ test('mobile packages cannot accidentally include a desktop sidecar', async () =
     assert.deepEqual(config.bundle.externalBin, ['binaries/gitchat-server']);
   }
 });
+
+test('Apple transport policy permits local networking without disabling HTTPS protection', async () => {
+  for (const name of ['Info.plist', 'Info.ios.plist']) {
+    const plist = await read(`src-tauri/${name}`);
+    assert.ok(plist.includes('<key>NSAllowsLocalNetworking</key>'));
+    assert.ok(!plist.includes('NSAllowsArbitraryLoads'));
+  }
+});

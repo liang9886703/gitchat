@@ -50,6 +50,8 @@ npm run ios:build
 ## 验证
 
 ```sh
+# 没有系统 Chrome 时先安装测试浏览器
+npx playwright install chromium
 npm test
 npm run prepare:desktop
 npm run test:rust

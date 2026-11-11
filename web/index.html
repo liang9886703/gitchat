@@ -4,9 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f7f7fb">
+  <meta name="description" content="一张卡片，一个想法。按自己的节奏深入、发散，再把思路连起来。">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="求知">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>求知 · GitChat</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/platform.css">
   <script src="/app.js" defer></script>
+  <script src="/platform.js" defer></script>
 </head>
 <body>
   <div class="shell">
@@ -20,10 +29,11 @@
       </nav>
       <div class="sidebar-label">最近对话</div>
       <div id="sessions" class="session-list"></div>
-      <div class="sidebar-bottom"><button data-action="import"><span>↙</span> 导入分享</button><button data-action="settings"><span>⚙</span> 我的偏好</button><div id="mode" class="mode-label">正在连接…</div></div>
+      <div class="sidebar-bottom"><button data-action="import"><span>↙</span> 导入分享</button><button data-action="settings"><span>⚙</span> 我的偏好</button><button data-platform="devices"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="4" width="13" height="12" rx="2"/><path d="M7 20h6m-3-4v4"/><rect x="16" y="9" width="5" height="11" rx="1"/></svg> 设备与空间</button><button data-platform="install"><svg class="platform-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg> 安装求知</button><button data-platform="native-settings" hidden>连接设置</button><button data-platform="recover-note" hidden>继续未发送的灵感</button><div id="mode" class="mode-label">正在连接…</div></div>
     </aside>
     <button id="sidebar-scrim" class="scrim" aria-label="关闭导航" data-action="sidebar"></button>
     <div class="workspace">
+      <div id="platform-status" class="platform-status" role="status" aria-live="polite" hidden></div>
       <header class="topbar">
         <button class="icon-button mobile-menu" data-action="sidebar" aria-label="打开导航">☰</button>
         <div class="page-heading"><span id="page-title">新的探索</span><small id="page-subtitle">一个问题，一个新的方向</small></div>

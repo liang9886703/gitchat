@@ -7,3 +7,4 @@ gobuildcache
 *.log
 node_modules
 test-results
+apps
