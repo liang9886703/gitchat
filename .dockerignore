@@ -1,0 +1,7 @@
+.git
+.env
+data
+docs
+gocache
+gobuildcache
+*.log

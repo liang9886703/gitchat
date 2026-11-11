@@ -14,5 +14,11 @@ func testBadCounter() {
 	builder2.WriteString("World")
 }
 func TestBadCounter(t *testing.T) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("copying a nonempty strings.Builder must panic")
+		}
+	}()
 	testBadCounter()
 }

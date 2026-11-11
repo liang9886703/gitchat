@@ -1,106 +1,85 @@
 package cards
 
 import (
+	"fmt"
 	"gitchat/src/modelServer"
-	"sync"
+	"strings"
 )
 
-type ChatCompletionMessage = modelServer.ChatCompletionMessage
-
-// 管理一次用户和模型的对话历史上下文
-type oneChat struct {
-	contents []*ChatCompletionMessage //"role": "user", "content": "1+1=?",在转为消息发送时，role和content交换位置不影响的
-	Identity cardIdentity             // 标志这个对话对应的卡片
-	//引用
-}
-
-// 管理所有历史对话
-type rawContexts []*oneChat
-type compressContexts []*oneChat
-
-func createOneChat(answer []*ChatCompletionMessage, identity cardIdentity) *oneChat {
-	return &oneChat{
-		contents: answer,
-		Identity: identity,
+// ancestors returns the induced ancestor subgraph in stable topological order.
+// Shared ancestors of a merge appear once, and unrelated siblings never enter context.
+func ancestors(v SessionView, ids []string) []Card {
+	byID := map[string]Card{}
+	for _, c := range v.Cards {
+		byID[c.ID] = c
 	}
-}
-
-// 用于增加角色的回答
-func (onechat *oneChat) reciveAnswer(answer []*ChatCompletionMessage) {
-	onechat.contents = append(onechat.contents, answer...)
-}
-
-func (ctx *rawContexts) toChatCompletionMessages() []*ChatCompletionMessage {
-	if ctx == nil {
-		return nil
-	}
-
-	// for _, onechat := range *ctx {
-	// 	if onechat != nil {
-	// 		for _, msg := range onechat.contents {
-	// 			fmt.Println(msg.Role, msg.Content)
-	// 		}
-	// 	}
-	// }
-
-	var totalCap int = 0
-	for _, onechat := range *ctx {
-		if onechat != nil {
-			totalCap += len(onechat.contents)
+	selected := map[string]bool{}
+	var visit func(string)
+	visit = func(id string) {
+		if selected[id] {
+			return
+		}
+		c, ok := byID[id]
+		if !ok {
+			return
+		}
+		selected[id] = true
+		for _, p := range c.ParentIDs {
+			visit(p)
 		}
 	}
-
-	result := make([]*ChatCompletionMessage, 0, totalCap)
-
-	for _, onechat := range *ctx {
-		if onechat == nil {
+	for _, id := range ids {
+		visit(id)
+	}
+	out := []Card{}
+	for _, c := range v.Cards {
+		if selected[c.ID] {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+func contextFor(v SessionView, parents []string, operation string) ([]modelServer.Message, modelServer.Memory) {
+	messages := []modelServer.Message{}
+	if operation == "merge" {
+		messages = append(messages, modelServer.Message{Role: "system", Content: "用户正在合并独立思考分支。以下节点标注了父节点，请对比不同分支的共同点、差异、冲突与待确认事项，保留各分支来源，不将互斥方案当成同时成立的事实。"})
+	}
+	var memory modelServer.Memory
+	for _, c := range ancestors(v, parents) {
+		if c.Operation == "root" {
 			continue
 		}
-		result = append(result, onechat.contents...)
+		question := c.Question
+		if c.Quote != "" {
+			question += "\n引用内容：\n" + c.Quote
+		}
+		if operation == "merge" {
+			question = fmt.Sprintf("[节点 %s，父节点 %s]\n%s", c.ID, strings.Join(c.ParentIDs, ","), question)
+		}
+		messages = append(messages, modelServer.Message{Role: "user", Content: question}, modelServer.Message{Role: "assistant", Content: c.Answer})
+		if memory.Goal == "" {
+			memory.Goal = c.Memory.Goal
+		}
+		memory.Progress = uniqueStrings(append(memory.Progress, c.Memory.Progress...), 32)
+		memory.BranchIdeas = uniqueStrings(append(memory.BranchIdeas, c.Memory.BranchIdeas...), 24)
 	}
-	return result
+	return messages, memory
 }
-
-func (ctx *compressContexts) toChatCompletionMessages() []*ChatCompletionMessage {
-	if ctx == nil {
-		return nil
-	}
-	totalCap := 0
-	for _, onechat := range *ctx {
-		if onechat != nil {
-			totalCap += len(onechat.contents)
+func uniqueStrings(values []string, max int) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v != "" && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
 		}
 	}
-
-	var result []*ChatCompletionMessage
-	for _, onechat := range *ctx {
-		if onechat == nil {
-			continue
-		}
-		result = append(result, onechat.contents...)
+	if len(out) > max {
+		out = out[len(out)-max:]
 	}
-	return result
+	return out
 }
-
-// 压缩是必要的，一定等前面压缩完成了，才会进行下一轮对话
-func GetCompressContext(card *cardNode) (*compressContexts, error) {
-	//todo：上锁查看压缩的上下文结果，模型侧迟迟没有返回压缩的上下文，则返回错误
-	contexts := make([]*oneChat, 0, len(card.chats))
-	contexts = append(contexts, card.chats...)
-
-	// &((compressContexts)contexts) 这样不行，因为结构体之间的类型转换会触发拷贝行为，拷贝的临时变量不能对其取值
-	return (*compressContexts)(&contexts), nil
-}
-
-// todo：这个事再说
-// 一个全局变量数组，用于存储请求句柄
-var global any
-var globalMutex sync.Mutex
-var status []bool
-
-// 这是一个后台定时任务
-func reciveCompressContext(time int) {
-	//查看status，数组较大且大多数都是空，则一次性更换数组
-	//上锁遍历数组，查看是否完成了请求句柄，填入内容，修改状态为完成
-	//继续下一轮定时器，time为时间间隔
+func prefText(p Preferences) string {
+	return fmt.Sprintf("表达风格：%s\n兴趣：%s\n常见任务：%s\n已记住的偏好：%s", p.Tone, strings.Join(p.Interests, "、"), strings.Join(p.CommonTasks, "、"), strings.Join(p.Learned, "、"))
 }

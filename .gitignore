@@ -1,4 +1,8 @@
-gocache
-gobuildcache
-.history
+gocache/
+gobuildcache/
+.history/
 env.sh
+.env
+data/
+gitchat
+*.test

@@ -1,300 +1,256 @@
 package cards
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"gitchat/src/modelServer"
 	"strings"
 	"time"
-
-	"gitchat/src/modelServer"
+	"unicode/utf8"
 )
 
-// 用string而不是uuid是为了增加可读性，可以在uuid后面加上中文拼音
-type AppId struct {
-	MainId string // 类似gpt的项目概念，不同appid不同内置提示词
-}
-type SessionId struct { //注意这个sessionid和网络传输的字段完全不同
-	_      struct{}
-	MainId string // 一个appid下的一次聊天，对应一个无环图
-}
-
-//Version和cardId的区别是，前者标记具体的卡片内容，后者标识这个卡片的位置
-//一个典型的场景是，这张卡片的回复终止了，或者觉得回答的不好要覆盖这个卡片的内容，此时这个卡片位置没有改变但是内容变了
-
-func newSessionId() (SessionId, error) {
-	// node, err := getSnowflakeNode()
-	// if err != nil {
-	// 	return SessionId{}, err
-	// }
-	return SessionId{MainId: modelServer.GetNewUUID()}, nil
-}
-
-func (s *SessionId) IsEmpty() bool {
-	return strings.TrimSpace(s.MainId) == ""
-}
-func (s *AppId) IsEmpty() bool {
-	return strings.TrimSpace(s.MainId) == ""
-}
-func (s *Version) IsEmpty() bool {
-	return strings.TrimSpace(s.MainId) == ""
-}
-func (s *Version) String() string {
-	return s.MainId
-}
-func (s *SessionId) String() string {
-	return s.MainId
-}
-func (s *AppId) String() string {
-	return s.MainId
-}
-
-func VersionFromString(str string) Version {
-	return Version{MainId: strings.TrimSpace(str)}
-}
-func SessionIdFromString(str string) SessionId {
-	return SessionId{MainId: strings.TrimSpace(str)}
-}
-func AppIdFromString(str string) AppId {
-	return AppId{MainId: strings.TrimSpace(str)}
-}
-
-// 通过已有的卡片节点创建一个他的子节点
-func (s *session) createDeepenCard(old *cardNode, index int64, isEmpty bool) *cardNode {
-	newcard := newCardNode(index, isEmpty, old.ModelSession)
-	newcard.statusChange(CardStatusCreating)
-	// 更新图结构
-	deepenGraphInfo(&old.Graph, &newcard.Graph, newcard.Identity)
-	// 更新事件
-	newcard.CardEvt.init(OpeDeepen, old.Identity, []cardIdentity{old.Identity}, newcard.Identity)
-	// 更新聊天记录
-	newcard.initChatsFromOther(old)
-	return newcard
-}
-
-type modelServerCallback struct {
-	card *cardNode
-}
-
-func (callback *modelServerCallback) Start() error {
-	callback.card.statusChange(CardStatusRequesting)
-
-	fmt.Print("--------------------------------[callback]start--------------------------------\n")
-	return nil
-}
-
-func (callback *modelServerCallback) FirstChar(message string) error {
-	fmt.Println("[callback]FirstChar")
-
-	callback.card.statusChange(CardStatusToken)
-
-	callback.card.updateMsg(message)
-	// card.chats[len(card.chats)-1].reciveAnswer([]*ChatCompletionMessage{
-	// 	{
-	// 		Role:    "assistant",
-	// 		Content: message,
-	// 	},
-	// })
-	// card.chats[len(card.chats)-1].Identity = card.Identity
-	fmt.Print(message)
-	return nil
-}
-
-// 接口的参数名字不同，还能继承接口吗?
-func (callback *modelServerCallback) NextChar(message string) error {
-	callback.card.updateMsg(message)
-
-	callback.card.statusChange(CardStatusToken)
-
-	fmt.Printf("%s", message)
-	return nil
-}
-
-func (callback *modelServerCallback) End() error {
-	fmt.Println("")
-	fmt.Println("[callback]End")
-	callback.card.updateMsgEnd()
-	callback.card.statusChange(CardStatusFinish)
-
-	fmt.Print("--------------------------------[callback]end--------------------------------\n")
-	//todo这里是临时方案，未来需要网络接收到压缩上下文并更新
-	callback.card.compressContext.toChatCompletionMessages()
-	return nil
-}
-
-func (callback *modelServerCallback) GetError(err error) error {
-	fmt.Println("[callback]GetError")
-	callback.card.statusChange(CardStatusError)
-
-	return nil
-}
-
-func getModelServerCallback(card *cardNode) *modelServerCallback {
-	return &modelServerCallback{
-		card: card,
+func normalizeInput(in ChatInput) (ChatInput, error) {
+	in.Question = strings.TrimSpace(in.Question)
+	in.Quote = strings.TrimSpace(in.Quote)
+	in.RequestID = strings.TrimSpace(in.RequestID)
+	if in.Operation == "" {
+		in.Operation = "deepen"
 	}
-}
-
-type cardsGrouptatus int //卡片的生命周期
-
-const (
-	CardsGroupInit cardsGrouptatus = iota
-	CardsGroupRequesting
-	CardsGroupArchiving //先把所有记录得到一张总结卡片，再持久化
-	CardsGroupArchived
-)
-
-type session struct { //标识和用户建立的一次对话
-	cards []*cardNode //第0个卡片一定是一张空白初始化卡片，用户的卡片从第一张开始
-	// todo：多个协程可能对同一个位置进行操作，因此需要加锁
-	lastIndex   int64                 //最后一个卡片的位置
-	lastVersion Version               //上一次对话的版本，用户返回错误的版本则回复所有版本，并刷新用户界面，重新发送数据，这个字段保留
-	cardsMap    map[Version]*cardNode //空白卡片得有版本，不然无法定位
-	app         *application
-
-	isSummarize bool
-	isExist     bool
-	status      cardsGrouptatus
-
-	sessionId        SessionId
-	appId            AppId
-	createTime       time.Time
-	lastcardIdentity cardIdentity
-	lastcardTime     time.Time
-} //定义
-
-type application struct {
-	// 通过session里的lastcardTime来判断哪个session是活跃的，定时任务持久化并清理不活跃的session
-	sessions map[SessionId]*session
-
-	chatbot      *modelServer.Chatbot //管理对话传输配置
-	chattemplate modelServer.ChatTemplate
-
-	appId   AppId
-	appName string
-
-	createTime       time.Time
-	lastcardIdentity cardIdentity
-	lastcardTime     time.Time
-} //定义
-
-func (app *application) createNewSession() (SessionId, *session, Version) {
-	var (
-		sessionId SessionId = SessionId{MainId: modelServer.GetNewUUID()}
-		version   Version   = Version{MainId: modelServer.GetNewUUID()}
-	)
-	//fmt.Println(app.chatbot)
-	//fmt.Println("check chatbot")
-	//每个app都从一张空白卡片开始
-	card := newCardNode(0, true, modelServer.CreateSession(app.chatbot, &app.chattemplate))
-	app.sessions[sessionId] = &session{
-		cards:       []*cardNode{card},
-		lastIndex:   0,
-		cardsMap:    map[Version]*cardNode{version: card},
-		lastVersion: version,
-
-		isSummarize: false,
-		isExist:     true,
-		status:      CardsGroupInit,
-
-		sessionId:        sessionId,
-		appId:            app.appId,
-		createTime:       time.Now(),
-		lastcardIdentity: card.Identity,
-		lastcardTime:     time.Now(),
+	if in.Operation != "deepen" && in.Operation != "branch" && in.Operation != "merge" {
+		return in, fmt.Errorf("%w: unknown operation", ErrInvalid)
 	}
-	app.lastcardIdentity = card.Identity
-	app.lastcardTime = time.Now()
-	return sessionId, app.sessions[sessionId], version
-}
-
-func (s *session) updateSessionWithNewCard(newcard *cardNode) {
-	s.cards = append(s.cards, newcard)
-	s.lastVersion = newcard.Identity.Version
-	s.cardsMap[newcard.Identity.Version] = newcard
-
-	s.lastcardIdentity = newcard.Identity
-	s.lastcardTime = newcard.CardEvt.EventTime
-}
-
-func (s *session) firstStreamChatOnce(versionId Version, msg string) (modelServer.RecvStreamContext, Version, error) {
-	var (
-		card *cardNode
-		ok   bool
-	)
-
-	if card, ok = s.cardsMap[versionId]; !ok {
-		return modelServer.RecvStreamContext{}, versionId, errors.New("versionId no exist")
+	if in.Question == "" || utf8.RuneCountInString(in.Question) > 12000 || utf8.RuneCountInString(in.Quote) > 12000 || len(in.RequestID) > 128 {
+		return in, fmt.Errorf("%w: question, quote or request ID length", ErrInvalid)
 	}
-
-	// todo: 新建一个卡片，这是需要上锁的，避免多个协程在同一个位置新建卡片
-	s.lastIndex++
-
-	newcard := s.createDeepenCard(card, s.lastIndex, false)
-	s.updateSessionWithNewCard(newcard)
-
-	newcard.statusChange(CardStatusCreated)
-
-	//发消息
-	content, err := newcard.ModelSession.FirstStreamChat(msg, getModelServerCallback(newcard))
-	if err != nil {
-		return modelServer.RecvStreamContext{}, versionId, err
+	if len(in.ParentIDs) == 0 || len(in.ParentIDs) > 16 {
+		return in, fmt.Errorf("%w: select between 1 and 16 cards", ErrInvalid)
 	}
-
-	return *content, newcard.Identity.Version, nil
-}
-
-func (s *session) nextStreamChatOnce(versionId Version, msg string, ope operation) (modelServer.RecvStreamContext, Version, error) {
-
-	var (
-		card    *cardNode
-		ok      bool
-		newcard *cardNode
-		ctx     []*ChatCompletionMessage
-	)
-
-	if card, ok = s.cardsMap[versionId]; !ok {
-		return modelServer.RecvStreamContext{}, versionId, errors.New("versionId no exist")
-	}
-
-	// todo: 新建一个卡片，这是需要上锁的，避免多个协程在同一个位置新建卡片
-	s.lastIndex++
-	switch ope {
-	case OpeDeepen:
-		newcard = s.createDeepenCard(card, s.lastIndex, false)
-	case OpeBranch: //todo
-		s.lastIndex++
-	case OpeMerge:
-		s.lastIndex++
-	default:
-		return modelServer.RecvStreamContext{}, versionId, errors.New("invalid operation")
-	}
-
-	s.updateSessionWithNewCard(newcard)
-
-	newcard.statusChange(CardStatusCreated)
-
-	if card.isCompressContext {
-		compressedContext, err := GetCompressContext(card)
-		if err != nil {
-			// 失败的情况是模型侧迟迟没有返回压缩的上下文，此时请求失败
-			return modelServer.RecvStreamContext{}, versionId, err
+	ids := map[string]bool{}
+	for _, id := range in.ParentIDs {
+		if ids[id] {
+			return in, fmt.Errorf("%w: duplicate parent", ErrInvalid)
 		}
-		ctx = compressedContext.toChatCompletionMessages()
-		//发消息
-	} else {
-		ctx = card.chats.toChatCompletionMessages()
+		ids[id] = true
 	}
-	for _, msg := range ctx {
-		fmt.Println(msg.Role, msg.Content)
+	if in.Operation == "merge" && len(in.ParentIDs) < 2 {
+		return in, fmt.Errorf("%w: merge requires at least two cards", ErrInvalid)
 	}
-	content, err := newcard.ModelSession.NextStreamChat(msg,
-		ctx,
-		getModelServerCallback(newcard),
-	)
+	if in.Operation != "merge" && len(in.ParentIDs) != 1 {
+		return in, fmt.Errorf("%w: operation requires one card", ErrInvalid)
+	}
+	return in, nil
+}
+func (cs *CardServer) Chat(ctx context.Context, owner, sessionID string, input ChatInput) (<-chan Event, error) {
+	input, err := normalizeInput(input)
 	if err != nil {
-		return modelServer.RecvStreamContext{}, versionId, err
+		return nil, err
 	}
-	//todo 同意一下错误时的返回处理
-
-	return *content, newcard.Identity.Version, nil
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	s := cs.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, ErrConflict
+	}
+	v, err := s.session(owner, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if previous, exists := v.Requests[input.RequestID]; input.RequestID != "" && exists {
+		a, _ := json.Marshal(previous.Input)
+		b, _ := json.Marshal(input)
+		if string(a) != string(b) {
+			return nil, fmt.Errorf("%w: request ID was used for a different question", ErrConflict)
+		}
+		card, err := findCard(v, previous.CardID)
+		if err != nil {
+			return nil, err
+		}
+		if isActive(card.Status) {
+			return nil, fmt.Errorf("%w: request is already generating", ErrConflict)
+		}
+		ch := make(chan Event, 1)
+		copy := clone(*card)
+		eventType := "completed"
+		if copy.Status != "completed" {
+			eventType = "error"
+		}
+		ch <- Event{Type: eventType, Card: &copy, Error: copy.Error}
+		close(ch)
+		return ch, nil
+	}
+	parents := append([]string{}, input.ParentIDs...)
+	for _, id := range parents {
+		card, err := findCard(v, id)
+		if err != nil {
+			return nil, err
+		}
+		if isActive(card.Status) {
+			return nil, fmt.Errorf("%w: parent is still generating", ErrConflict)
+		}
+	}
+	if input.Operation == "branch" {
+		card, _ := findCard(v, parents[0])
+		parents = append([]string{}, card.ParentIDs...)
+		if len(parents) == 0 {
+			parents = []string{v.RootID}
+		}
+	}
+	depth := 1
+	for _, id := range parents {
+		p, _ := findCard(v, id)
+		if p.Depth+1 > depth {
+			depth = p.Depth + 1
+		}
+	}
+	messages, memory := contextFor(v.SessionView, parents, input.Operation)
+	if memory.Goal == "" {
+		memory.Goal = input.Question
+	}
+	now := time.Now().UTC()
+	card := Card{ID: newID(), ParentIDs: parents, Question: input.Question, Quote: input.Quote, Title: shortTitle(input.Question), Status: "pending", Operation: input.Operation, Depth: depth, CreatedAt: now, UpdatedAt: now, Suggestions: []modelServer.Suggestion{}, Memory: memory}
+	reqQuestion := input.Question
+	if input.Quote != "" {
+		reqQuestion += "\n用户引用：\n" + input.Quote
+	}
+	req := modelServer.Request{Question: reqQuestion, Messages: messages, Depth: depth, Operation: input.Operation, Preferences: prefText(s.db.Preferences[owner]), Memory: memory, SystemPrompt: s.prompts[v.AppID]}
+	if parent, parentErr := findCard(v, parents[0]); parentErr == nil {
+		req.PreviousModel = parent.Model
+	}
+	if err = s.mutate(func() error {
+		v.Cards = append(v.Cards, card)
+		v.FocusID = card.ID
+		v.UpdatedAt = now
+		if len(v.Cards) == 2 && v.Title == "新的思考" {
+			v.Title = shortTitle(input.Question)
+		}
+		if input.RequestID != "" {
+			v.Requests[input.RequestID] = requestRecord{CardID: card.ID, Input: input}
+		}
+		s.count(owner, input.Operation)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	s.active[card.ID] = cancel
+	ch := make(chan Event, 32)
+	cardCopy := clone(card)
+	ch <- Event{Type: "created", Card: &cardCopy}
+	s.wg.Add(1)
+	go s.generate(runCtx, cancel, owner, sessionID, card.ID, req, ch)
+	return ch, nil
+}
+func (s *serverState) generate(ctx context.Context, cancel context.CancelFunc, owner, sessionID, cardID string, req modelServer.Request, ch chan Event) {
+	defer s.wg.Done()
+	defer close(ch)
+	defer cancel()
+	result, err := s.provider.Generate(ctx, req, func(delta string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s.mu.Lock()
+		v, lookupErr := s.session(owner, sessionID)
+		if lookupErr != nil {
+			s.mu.Unlock()
+			return lookupErr
+		}
+		c, lookupErr := findCard(v, cardID)
+		if lookupErr != nil {
+			s.mu.Unlock()
+			return lookupErr
+		}
+		c.Status = "streaming"
+		c.Answer += delta
+		c.UpdatedAt = time.Now().UTC()
+		s.mu.Unlock()
+		select {
+		case ch <- Event{Type: "delta", Delta: delta}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err == nil {
+		err = ctx.Err()
+	}
+	s.mu.Lock()
+	delete(s.active, cardID)
+	v, lookupErr := s.session(owner, sessionID)
+	if lookupErr != nil {
+		s.mu.Unlock()
+		return
+	}
+	card, lookupErr := findCard(v, cardID)
+	if lookupErr != nil {
+		s.mu.Unlock()
+		return
+	}
+	card.UpdatedAt = time.Now().UTC()
+	v.UpdatedAt = card.UpdatedAt
+	eventType := "completed"
+	if err != nil {
+		card.Status = "error"
+		card.Error = err.Error()
+		eventType = "error"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			card.Status = "cancelled"
+			card.Error = "生成已停止，可从此卡片继续或重新提问"
+		}
+	} else {
+		card.Status = "completed"
+		card.Answer = result.Answer
+		card.Model = result.Model
+		card.Suggestions = clone(result.Suggestions)
+		card.Memory = clone(result.Memory)
+		if card.Memory.Goal == "" {
+			card.Memory.Goal = req.Memory.Goal
+		}
+		if strings.TrimSpace(result.Title) != "" {
+			card.Title = result.Title
+		}
+		p := s.db.Preferences[owner]
+		p.Learned = uniqueStrings(append(p.Learned, result.Memory.Preferences...), 24)
+		s.db.Preferences[owner] = p
+		s.count(owner, "completed")
+	}
+	if saveErr := s.save(); saveErr != nil {
+		card.Status = "error"
+		card.Error = "保存失败：" + saveErr.Error()
+		eventType = "error"
+	}
+	copy := clone(*card)
+	s.mu.Unlock()
+	event := Event{Type: eventType, Card: &copy, Error: copy.Error}
+	// Prefer a terminal event even when a user explicitly stopped generation.
+	select {
+	case ch <- event:
+		return
+	default:
+	}
+	// Cancellation must never leave a goroutine blocked on a disconnected client.
+	select {
+	case ch <- event:
+	case <-ctx.Done():
+	}
+}
+func (cs *CardServer) Stop(owner, sessionID, cardID string) error {
+	s := cs.state
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, err := s.session(owner, sessionID)
+	if err != nil {
+		return err
+	}
+	if _, err = findCard(v, cardID); err != nil {
+		return err
+	}
+	if cancel := s.active[cardID]; cancel != nil {
+		cancel()
+	}
+	return nil
 }

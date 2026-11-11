@@ -2,291 +2,229 @@ package modelServer
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
-	"fmt"
+	openai "github.com/sashabaranov/go-openai"
 	"io"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
-
-	"github.com/google/uuid"
-	openai "github.com/sashabaranov/go-openai"
 )
 
-type ChatCompletionMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content,omitempty"`
-}
+type ChatCompletionMessage = Message
 
-// 提供给外部使用管理已经进行的对话，主要用于取消对话
 type RecvStreamContext struct {
 	Ctx    *context.Context
 	Cancel *context.CancelFunc
 	Ch     *chan StreamMessage
 }
 
-// 标识和模型服务建立的一次对话
+func (c *RecvStreamContext) StopRecvStream() {
+	if c != nil && c.Cancel != nil {
+		(*c.Cancel)()
+	}
+}
+
 type Session struct {
 	Question        string
 	SessionId       string
 	CurChatbot      *Chatbot
 	DefaultTemplate *ChatTemplate
-	CurrentReq      *openai.ChatCompletionRequest //用户的问题会在这里覆盖旧的问题
-	IsFirst         bool                          //是否是第一次对话
-	ctx             *RecvStreamContext
+	CurrentReq      *openai.ChatCompletionRequest
+	IsFirst         bool
+	mu              sync.Mutex
 }
-
 type ChatTemplate struct {
-	Sysprompt      string
-	Userprompt     string //openai没有这个东西，为我的服务后续扩展做准备
-	Tools          []string
-	Responseformat string
+	Sysprompt, Userprompt string
+	Tools                 []string
+	Responseformat        string
 }
-
-// 一个chatbot对应全局会话管理
 type Chatbot struct {
-	//Sessions  map[uuid.UUID]Session
-	Cfg       *openai.ClientConfig
-	IsStream  bool
-	MaxTokens int
-	Model     string
-	BaseURL   string
-	client    *openai.Client
+	Cfg            *openai.ClientConfig
+	IsStream       bool
+	MaxTokens      int
+	Model, BaseURL string
 }
-
 type SendStreamContextType int
 
 const (
-	SendStreamContextTypeInit   SendStreamContextType = iota
-	SendStreamContextTypeError                        // 包括：创建错误、网络错误、主动停止
-	SendStreamContextTypeStream                       // 流式返回token
-	SendStreamContextTypeEnd                          //流式结束
+	SendStreamContextTypeInit SendStreamContextType = iota
+	SendStreamContextTypeError
+	SendStreamContextTypeStream
+	SendStreamContextTypeEnd
 )
 
 type StreamMessage struct {
-	Session  *Session
-	Message  string
-	Question string
-	FullMsg  string
-	Type     SendStreamContextType
+	Session                    *Session
+	Message, Question, FullMsg string
+	Type                       SendStreamContextType
 }
-
-// todo；项目中太多的无效命名，全部用继承来代替
 type ModelServerCallback interface {
 	Start() error
-	FirstChar(message string) error
-	NextChar(message string) error
+	FirstChar(string) error
+	NextChar(string) error
 	End() error
-	GetError(err error) error
-}
-
-// todo 上层维护一个cancel全局数组，用于中止会话
-func (ctx *RecvStreamContext) StopRecvStream() {
-	(*ctx.Cancel)()
+	GetError(error) error
 }
 
 func GetNewUUID() string {
-	return uuid.New().String()
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		panic("cryptographic random source unavailable")
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	value := hex.EncodeToString(bytes)
+	return value[:8] + "-" + value[8:12] + "-" + value[12:16] + "-" + value[16:20] + "-" + value[20:]
 }
-
 func InitChatbot(chatbot *Chatbot) error {
-	chatbot.Cfg.HTTPClient = &http.Client{
-		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-			//logger.Println(">>>", req.Method, req.URL.String())
-			return http.DefaultTransport.RoundTrip(req)
-		}),
+	if chatbot == nil || chatbot.Cfg == nil {
+		return errors.New("chatbot configuration is missing")
+	}
+	if chatbot.Cfg.HTTPClient == nil {
+		chatbot.Cfg.HTTPClient = &http.Client{Timeout: 90 * time.Second}
 	}
 	return nil
 }
-
-var defaultMsg []openai.ChatCompletionMessage
-
 func CreateSession(chatbot *Chatbot, template *ChatTemplate) *Session {
-	defaultMsg = []openai.ChatCompletionMessage{
-		{
-			Role:    openai.ChatMessageRoleSystem,
-			Content: template.Sysprompt,
-		},
-		{
-			Role:    openai.ChatMessageRoleUser,
-			Content: template.Userprompt,
-		},
+	if template == nil {
+		template = &ChatTemplate{}
 	}
-	return &Session{
-		CurChatbot:      chatbot,
-		DefaultTemplate: template,
-		CurrentReq: &openai.ChatCompletionRequest{
-			Model:     chatbot.Model,
-			MaxTokens: chatbot.MaxTokens,
-			Messages:  defaultMsg,
-			Stream:    chatbot.IsStream,
-		},
-		IsFirst: true,
+	copied := *template
+	request := &openai.ChatCompletionRequest{Stream: true}
+	if chatbot != nil {
+		request.Model = chatbot.Model
+		request.MaxTokens = chatbot.MaxTokens
 	}
+	if copied.Sysprompt != "" {
+		request.Messages = append(request.Messages, openai.ChatCompletionMessage{Role: "system", Content: copied.Sysprompt})
+	}
+	return &Session{CurChatbot: chatbot, DefaultTemplate: &copied, CurrentReq: request, IsFirst: true}
 }
-
-// 第一次对话是创建对话结构，将用户对话填入发送的消息字段
-func (session *Session) FirstStreamChat(message string, callback ModelServerCallback) (*RecvStreamContext, error) {
-	var err error
-
-	session.Question = message
-	//todo：发送到远端对话存储服务器
-	for i := range session.CurrentReq.Messages {
-		if session.CurrentReq.Messages[i].Role == openai.ChatMessageRoleUser {
-			session.CurrentReq.Messages[i].Content = message
-			//fmt.Println("message ready", session.Currentreq.Messages[i])
-			//return nil, errors.New("message content error")
-		}
-
-	}
-	session.CurChatbot.client = openai.NewClientWithConfig(*session.CurChatbot.Cfg)
-	if session.CurChatbot.client == nil {
-		return nil, errors.New("create client failed")
-	}
-
-	session.ctx, err = session.StartStreamChat(callback)
-	return session.ctx, err
+func (s *Session) FirstStreamChat(message string, callback ModelServerCallback) (*RecvStreamContext, error) {
+	return s.NextStreamChat(message, nil, callback)
 }
-
-// 第n次对话是从上下文模块里拿到所有对话，遍历生成消息字段
-func (session *Session) NextStreamChat(message string, messages []*ChatCompletionMessage, callback ModelServerCallback) (*RecvStreamContext, error) {
-	if session.CurChatbot.client == nil {
-		//todo:日志，非第一次对话，但client为空
-		session.CurChatbot.client = openai.NewClientWithConfig(*session.CurChatbot.Cfg)
-		if session.CurChatbot.client == nil {
-			return nil, errors.New("create client failed")
+func (s *Session) NextStreamChat(message string, messages []*ChatCompletionMessage, callback ModelServerCallback) (*RecvStreamContext, error) {
+	if strings.TrimSpace(message) == "" {
+		return nil, errors.New("message is empty")
+	}
+	s.mu.Lock()
+	if s.CurChatbot == nil || s.CurChatbot.Cfg == nil {
+		s.mu.Unlock()
+		return nil, errors.New("chatbot configuration is missing")
+	}
+	request := openai.ChatCompletionRequest{Model: s.CurChatbot.Model, MaxTokens: s.CurChatbot.MaxTokens, Stream: true}
+	if s.DefaultTemplate != nil && s.DefaultTemplate.Sysprompt != "" {
+		request.Messages = append(request.Messages, openai.ChatCompletionMessage{Role: "system", Content: s.DefaultTemplate.Sysprompt})
+	}
+	for _, message := range messages {
+		if message != nil {
+			request.Messages = append(request.Messages, openai.ChatCompletionMessage{Role: message.Role, Content: message.Content})
 		}
 	}
-
-	session.CurrentReq.Messages = make([]openai.ChatCompletionMessage, 0, len(messages)+len(defaultMsg)+1)
-	session.CurrentReq.Messages = append(session.CurrentReq.Messages, defaultMsg...)
-
-	for _, msg := range messages {
-		session.CurrentReq.Messages = append(session.CurrentReq.Messages, openai.ChatCompletionMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
-	}
-	session.CurrentReq.Messages = append(session.CurrentReq.Messages, openai.ChatCompletionMessage{
-		Role:    openai.ChatMessageRoleUser,
-		Content: message,
-	})
-
-	return session.StartStreamChat(callback)
+	request.Messages = append(request.Messages, openai.ChatCompletionMessage{Role: "user", Content: message})
+	s.Question = message
+	s.CurrentReq = &request
+	s.mu.Unlock()
+	return s.start(request, message, callback), nil
 }
-
-// 构件消息管理对象，另起协程发起网络请求
-func (session *Session) StartStreamChat(callback ModelServerCallback) (*RecvStreamContext, error) {
-
-	//resp, err := client.CreateChatCompletion(context.Background(), req)
-	// fmt.Println(resp.Choices[0].Message.Content)
-	// req.Messages = append(req.Messages, resp.Choices[0].Message)
-	// return resp.Choices[0].Message.Content, err
-
-	// 创建 channel 用于流式输出
-	ch := make(chan StreamMessage, 10) // todo：读配置，设置缓冲区大小
-	//defer close(ch)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	//defer cancel()
-
-	//todo：这里应该用create来创建，在创建中打出日志
-	recvStreamContext := RecvStreamContext{
-		Ctx:    &ctx,
-		Cancel: &cancel,
-		Ch:     &ch,
+func (s *Session) StartStreamChat(callback ModelServerCallback) (*RecvStreamContext, error) {
+	s.mu.Lock()
+	if s.CurrentReq == nil || s.CurChatbot == nil || s.CurChatbot.Cfg == nil {
+		s.mu.Unlock()
+		return nil, errors.New("session is not initialized")
 	}
-
-	go session.RecvStream(&recvStreamContext, callback)
-
-	return &recvStreamContext, nil
+	request := *s.CurrentReq
+	request.Messages = append([]openai.ChatCompletionMessage(nil), request.Messages...)
+	question := s.Question
+	s.mu.Unlock()
+	return s.start(request, question, callback), nil
 }
-
-// todo：接入日志级别
-// 启动 goroutine 处理流式响应
-func (session *Session) RecvStream(recvStreamContext *RecvStreamContext, callback ModelServerCallback) {
-	stream, err := session.CurChatbot.client.CreateChatCompletionStream(*recvStreamContext.Ctx, *session.CurrentReq)
+func (s *Session) start(request openai.ChatCompletionRequest, question string, callback ModelServerCallback) *RecvStreamContext {
+	ch := make(chan StreamMessage, 16)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	receive := &RecvStreamContext{Ctx: &ctx, Cancel: &cancel, Ch: &ch}
+	go s.receive(receive, request, question, callback)
+	return receive
+}
+func (s *Session) RecvStream(receive *RecvStreamContext, callback ModelServerCallback) {
+	s.mu.Lock()
+	request := *s.CurrentReq
+	request.Messages = append([]openai.ChatCompletionMessage(nil), request.Messages...)
+	question := s.Question
+	s.mu.Unlock()
+	s.receive(receive, request, question, callback)
+}
+func (s *Session) receive(receive *RecvStreamContext, request openai.ChatCompletionRequest, question string, callback ModelServerCallback) {
+	defer close(*receive.Ch)
+	defer (*receive.Cancel)()
+	ctx := *receive.Ctx
+	send := func(kind SendStreamContextType, text, full string) bool {
+		select {
+		case *receive.Ch <- StreamMessage{Session: s, Question: question, Message: text, FullMsg: full, Type: kind}:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	fail := func(err error) {
+		if callback != nil {
+			_ = callback.GetError(err)
+		}
+		send(SendStreamContextTypeError, err.Error(), "")
+	}
+	if callback != nil {
+		if err := callback.Start(); err != nil {
+			fail(err)
+			return
+		}
+	}
+	client := openai.NewClientWithConfig(*s.CurChatbot.Cfg)
+	stream, err := client.CreateChatCompletionStream(ctx, request)
 	if err != nil {
-		callback.GetError(err)
-
-		*recvStreamContext.Ch <- StreamMessage{
-			Session:  session,
-			Message:  "[CREATE_ERROR]" + err.Error(),
-			Question: session.Question,
-			FullMsg:  "",
-			Type:     SendStreamContextTypeError,
-		}
+		fail(err)
 		return
 	}
 	defer stream.Close()
-	defer (*recvStreamContext.Cancel)()
-
-	var contents string
-	sendStreamContext := StreamMessage{
-		Session:  session,
-		Message:  "[STREAM_END]",
-		Question: session.Question,
-		FullMsg:  contents,
-		Type:     SendStreamContextTypeEnd,
-	}
-
-	callback.Start()
-	//stream.Header().Get("request_id")
-	// fmt.Println(stream.Header())
+	var answer strings.Builder
+	first := true
 	for {
-
-		response, err := stream.Recv() //这里会让出线程，从而给其他协程调用cancel的机会
+		response, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			sendStreamContext.Message = "[STREAM_END]"
-			sendStreamContext.Type = SendStreamContextTypeEnd
-			*recvStreamContext.Ch <- sendStreamContext
-			//3. todo 记录收到的所有token，发送给存储服务器
-			callback.End()
-			return
-		}
-
-		if err != nil {
-			sendStreamContext.Message = "[STREAM_ERROR]" + err.Error()
-			sendStreamContext.Type = SendStreamContextTypeError
-			*recvStreamContext.Ch <- sendStreamContext
-			callback.GetError(err)
-			return
-		}
-		if len(response.Choices) != 0 {
-			//2. 每收到一个token，就发送给客户端
-			content := func() string {
-				defer func() {
-					if r := recover(); r != nil {
-						fmt.Printf("Error extracting content from response.Choices[0].Delta.Content: %v", r)
-					}
-				}()
-				if response.Choices[0].Delta.Content != "" {
-					return response.Choices[0].Delta.Content
+			if callback != nil {
+				if err = callback.End(); err != nil {
+					fail(err)
+					return
 				}
-				return ""
-			}()
-
-			if content != "" {
-				sendStreamContext.Message = content
-				sendStreamContext.Type = SendStreamContextTypeStream
-				*recvStreamContext.Ch <- sendStreamContext
-				contents += content
 			}
-
-			if session.IsFirst {
-				//1. todo：接受并存储信息头，修改后续请求路径
-
-				//fmt.Println("--------------------------------")
-				//fmt.Println("response:", response)
-				//fmt.Println("--------------------------------")
-				session.SessionId = response.ID
-				session.IsFirst = false
-				callback.FirstChar(response.Choices[0].Delta.Content)
+			send(SendStreamContextTypeEnd, "[STREAM_END]", answer.String())
+			return
+		}
+		if err != nil {
+			fail(err)
+			return
+		}
+		if len(response.Choices) == 0 || response.Choices[0].Delta.Content == "" {
+			continue
+		}
+		text := response.Choices[0].Delta.Content
+		answer.WriteString(text)
+		if callback != nil {
+			if first {
+				err = callback.FirstChar(text)
 			} else {
-				callback.NextChar(response.Choices[0].Delta.Content)
+				err = callback.NextChar(text)
 			}
+			if err != nil {
+				fail(err)
+				return
+			}
+		}
+		first = false
+		if !send(SendStreamContextTypeStream, text, answer.String()) {
+			return
 		}
 	}
 }
-
-type roundTripperFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

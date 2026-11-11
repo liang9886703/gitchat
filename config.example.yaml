@@ -1,0 +1,42 @@
+# Copy to config.yaml or set GITCHAT_CONFIG. API keys are read only from environment.
+# mode can be demo or openai. If omitted, an API key enables openai mode.
+# Set OPENAI_API_KEY (or legacy OPENAI_API_KEY_0) for real generation.
+dataDir: ./data
+listenAddr: 127.0.0.1:8002
+timeoutSeconds: 90
+namespace:
+  - name: default
+    chatbotId: "0"
+    chatbot:
+      baseURL: https://api.openai.com/v1
+      model: gpt-4o-mini
+      maxTokens: 2400
+      isStream: true
+chattemplate:
+  - name: default
+    template:
+      sysprompt: 帮助用户逐步探索问题，每张卡片聚焦一个点，保留用户选择方向的空间。
+routing:
+  deepAfter: 4
+  contextChars: 12000
+  maxAnswerChars: 1200
+  retries: 1
+  # Model names must be available from the configured OpenAI-compatible endpoint.
+  strongModel: ""
+  fallbackModel: ""
+  topics: []
+  # topics:
+  #   - keywords: [代码, 架构, code]
+  #     model: your-code-model
+privacy:
+  redact: true
+  modelCheck: false
+# Optional local .md/.txt knowledge directory. Up to 1000 files of 256 KiB each.
+knowledgeDir: ""
+# Streamable HTTP MCP protocol 2025-03-26. Allowlisted tools must declare
+# annotations.readOnlyHint=true and accept {"query":"..."} arguments.
+mcpServers: []
+# mcpServers:
+#   - url: https://your-search-server.example/mcp
+#     tokenEnv: MCP_SEARCH_TOKEN
+#     tools: [search]
